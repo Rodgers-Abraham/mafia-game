@@ -9,6 +9,15 @@ const app = next({ dev })
 const handle = app.getRequestHandler()
 
 const rooms = {}
+const phaseTimers = {}
+
+const BRIEFING_DURATION = 10000  // 10s
+const NIGHT_DURATION    = 45000  // 45s
+const DAY_DURATION      = 180000 // 3min
+const VOTING_DURATION   = 60000  // 1min
+const RESULTS_DURATION  = 5000   // 5s
+
+// ─── Helpers ─────────────────────────────────────────────────────────
 
 function generateRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase()
@@ -35,15 +44,255 @@ function assignRoles(players) {
   return players.map((player, i) => ({ ...player, role: roles[i] }))
 }
 
-function checkWinCondition(room) {
-  const alivePlayers = room.players.filter(p => p.isAlive)
-  const aliveMafia = alivePlayers.filter(p => ['Mafia', 'Godfather'].includes(p.role))
-  const aliveTown = alivePlayers.filter(p => !['Mafia', 'Godfather'].includes(p.role))
+function isMafia(role) {
+  return role === 'Mafia' || role === 'Godfather'
+}
 
-  if (aliveMafia.length === 0) return 'town'
-  if (aliveMafia.length >= aliveTown.length) return 'mafia'
+function checkWinCondition(room) {
+  const alive = room.players.filter(p => p.isAlive)
+  const mafia = alive.filter(p => isMafia(p.role))
+  const town  = alive.filter(p => !isMafia(p.role))
+  if (mafia.length === 0) return 'town'
+  if (mafia.length >= town.length) return 'mafia'
   return null
 }
+
+function getVoteCounts(room) {
+  const counts = {}
+  Object.values(room.votes).forEach(({ targetId, weight }) => {
+    counts[targetId] = (counts[targetId] || 0) + weight
+  })
+  return counts
+}
+
+function clearPhaseTimer(roomId) {
+  if (phaseTimers[roomId]) {
+    clearTimeout(phaseTimers[roomId])
+    delete phaseTimers[roomId]
+  }
+}
+
+function setPhaseTimer(roomId, fn, delay) {
+  clearPhaseTimer(roomId)
+  phaseTimers[roomId] = setTimeout(fn, delay)
+}
+
+function getPlayerSocket(io, socketId) {
+  return io.sockets.sockets.get(socketId)
+}
+
+function getPlayerName(room, id) {
+  return room.players.find(p => p.id === id)?.name || 'Unknown'
+}
+
+// ─── Phase Transitions ────────────────────────────────────────────────
+
+function startNightPhase(io, roomId) {
+  const room = rooms[roomId]
+  if (!room) return
+  room.phase = 'night'
+  room.nightActions = {}
+  console.log(`🌙 Night phase - room ${roomId}`)
+  io.to(roomId).emit('room-updated', { room })
+  setPhaseTimer(roomId, () => resolveNight(io, roomId), NIGHT_DURATION)
+}
+
+function startDayPhase(io, roomId) {
+  const room = rooms[roomId]
+  if (!room) return
+  room.phase = 'day'
+  room.currentDay += 1
+  room.votes = {}
+  console.log(`☀️ Day ${room.currentDay} - room ${roomId}`)
+  io.to(roomId).emit('room-updated', { room })
+  setPhaseTimer(roomId, () => startVotingPhase(io, roomId), DAY_DURATION)
+}
+
+function startVotingPhase(io, roomId) {
+  const room = rooms[roomId]
+  if (!room) return
+  room.phase = 'voting'
+  room.votes = {}
+  console.log(`🗳️ Voting phase - room ${roomId}`)
+  io.to(roomId).emit('room-updated', { room })
+  setPhaseTimer(roomId, () => resolveVoting(io, roomId), VOTING_DURATION)
+}
+
+// ─── Night Resolution ─────────────────────────────────────────────────
+
+function resolveNight(io, roomId) {
+  const room = rooms[roomId]
+  if (!room) return
+
+  const actions = room.nightActions
+  let killed = null
+  let protectedTarget = null
+  const blocked = new Set()
+
+  console.log(`🔍 Resolving night for room ${roomId}`)
+
+  // Step 1 — collect blocks
+  Object.entries(actions).forEach(([playerId, action]) => {
+    if (action.actionType === 'block' && action.targetId) {
+      blocked.add(action.targetId)
+      const rbPlayer = room.players.find(p => p.id === playerId)
+      const s = getPlayerSocket(io, rbPlayer?.socketId)
+      if (s) s.emit('night-result', {
+        type: 'roleblocker',
+        message: `🚫 You successfully blocked ${getPlayerName(room, action.targetId)} — they could not use their ability tonight.`
+      })
+    }
+  })
+
+  // Step 2 — doctor protection (if doctor not blocked)
+  Object.entries(actions).forEach(([playerId, action]) => {
+    if (action.actionType === 'doctor-protect' && action.targetId && !blocked.has(playerId)) {
+      protectedTarget = action.targetId
+    }
+  })
+
+  // Step 3 — mafia kill (if mafia member not blocked)
+  const mafiaKills = {}
+  Object.entries(actions).forEach(([playerId, action]) => {
+    if (action.actionType === 'mafia-kill' && action.targetId && !blocked.has(playerId)) {
+      mafiaKills[action.targetId] = (mafiaKills[action.targetId] || 0) + 1
+    }
+  })
+
+  const mafiaTarget = Object.entries(mafiaKills).sort((a, b) => b[1] - a[1])[0]
+
+  if (mafiaTarget) {
+    const targetId = mafiaTarget[0]
+
+    if (targetId === protectedTarget) {
+      // Doctor saved the target
+      console.log(`💉 Doctor saved ${getPlayerName(room, targetId)}`)
+
+      const doctorEntry = Object.entries(actions).find(([pid, a]) =>
+        a.actionType === 'doctor-protect' && !blocked.has(pid)
+      )
+      if (doctorEntry) {
+        const doctorPlayer = room.players.find(p => p.id === doctorEntry[0])
+        const s = getPlayerSocket(io, doctorPlayer?.socketId)
+        if (s) s.emit('night-result', {
+          type: 'doctor-saved',
+          message: `💉 Your protection worked! You saved ${getPlayerName(room, targetId)} from death tonight!`
+        })
+      }
+
+      // Bodyguard dies if they were guarding the saved target
+      const bgEntry = Object.entries(actions).find(([pid, a]) =>
+        a.actionType === 'bodyguard-guard' && a.targetId === targetId && !blocked.has(pid)
+      )
+      if (bgEntry) {
+        killed = bgEntry[0]
+        console.log(`🛡️ Bodyguard ${getPlayerName(room, killed)} died protecting ${getPlayerName(room, targetId)}`)
+      }
+    } else {
+      killed = targetId
+    }
+  } else if (protectedTarget) {
+    // Quiet night — notify doctor
+    const doctorEntry = Object.entries(actions).find(([, a]) => a.actionType === 'doctor-protect')
+    if (doctorEntry) {
+      const doctorPlayer = room.players.find(p => p.id === doctorEntry[0])
+      const s = getPlayerSocket(io, doctorPlayer?.socketId)
+      if (s) s.emit('night-result', {
+        type: 'doctor-quiet',
+        message: `💉 You protected ${getPlayerName(room, protectedTarget)} — it was a quiet night, no attack came.`
+      })
+    }
+  }
+
+  // Step 4 — vigilante kill (if not blocked)
+  Object.entries(actions).forEach(([playerId, action]) => {
+    if (action.actionType === 'vigilante-kill' && action.targetId && !blocked.has(playerId)) {
+      const target = room.players.find(p => p.id === action.targetId)
+      if (target && target.isAlive) {
+        target.isAlive = false
+        console.log(`⚔️ Vigilante killed ${target.name}`)
+        const s = getPlayerSocket(io, room.players.find(p => p.id === playerId)?.socketId)
+        if (s) s.emit('night-result', {
+          type: 'vigilante',
+          message: `⚔️ You eliminated ${target.name}. They were a ${target.role}.`
+        })
+      }
+    }
+  })
+
+  // Step 5 — apply mafia kill
+  if (killed) {
+    const target = room.players.find(p => p.id === killed)
+    if (target) {
+      target.isAlive = false
+      console.log(`💀 ${target.name} (${target.role}) was killed`)
+    }
+  }
+
+  // Step 6 — check win condition
+  const winner = checkWinCondition(room)
+  if (winner) {
+    room.phase = 'ended'
+    room.winner = winner
+    io.to(roomId).emit('room-updated', { room })
+    return
+  }
+
+  startDayPhase(io, roomId)
+}
+
+// ─── Voting Resolution ────────────────────────────────────────────────
+
+function resolveVoting(io, roomId) {
+  const room = rooms[roomId]
+  if (!room) return
+
+  const counts = getVoteCounts(room)
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1])
+
+  let eliminated = null
+  let tie = false
+
+  if (sorted.length >= 2 && sorted[0][1] === sorted[1][1]) {
+    tie = true
+    console.log(`⚖️ Vote tied in room ${roomId}`)
+  } else if (sorted.length > 0) {
+    const target = room.players.find(p => p.id === sorted[0][0])
+    if (target) {
+      if (target.role === 'Jester') {
+        target.isAlive = false
+        room.phase = 'ended'
+        room.winner = 'jester'
+        console.log(`🤡 Jester ${target.name} wins!`)
+        io.to(roomId).emit('vote-result', { eliminated: target, tie: false, jesterWin: true })
+        io.to(roomId).emit('room-updated', { room })
+        return
+      }
+      target.isAlive = false
+      eliminated = target
+      console.log(`🗳️ ${target.name} (${target.role}) voted off`)
+    }
+  }
+
+  io.to(roomId).emit('vote-result', { eliminated, tie })
+
+  room.votes = {}
+  room.phase = 'results'
+
+  const winner = checkWinCondition(room)
+  if (winner) {
+    room.phase = 'ended'
+    room.winner = winner
+  }
+
+  io.to(roomId).emit('room-updated', { room })
+
+  if (room.phase === 'results') {
+    setPhaseTimer(roomId, () => startNightPhase(io, roomId), RESULTS_DURATION)
+  }
+}
+
+// ─── Server ───────────────────────────────────────────────────────────
 
 app.prepare().then(() => {
   const httpServer = createServer((req, res) => {
@@ -58,23 +307,20 @@ app.prepare().then(() => {
   io.on('connection', (socket) => {
     console.log('Client connected:', socket.id)
 
-    // ─── Create Room ───────────────────────────────────────────────
     socket.on('create-room', ({ playerName }, callback) => {
       const roomId = generateRoomCode()
       const playerId = uuidv4()
 
-      const player = {
-        id: playerId,
-        socketId: socket.id,
-        name: playerName,
-        role: null,
-        isAlive: true,
-        isHost: true,
-      }
-
       const room = {
         id: roomId,
-        players: [player],
+        players: [{
+          id: playerId,
+          socketId: socket.id,
+          name: playerName,
+          role: null,
+          isAlive: true,
+          isHost: true,
+        }],
         phase: 'lobby',
         currentDay: 1,
         nightActions: {},
@@ -89,49 +335,33 @@ app.prepare().then(() => {
       socket.data.playerId = playerId
 
       console.log(`✅ Room created: ${roomId} by ${playerName}`)
-      console.log(`📦 Rooms available:`, Object.keys(rooms))
-
       callback({ success: true, room, playerId })
       io.to(roomId).emit('room-updated', { room })
     })
 
-    // ─── Rejoin Room ───────────────────────────────────────────────
     socket.on('rejoin-room', ({ roomId, playerId }, callback) => {
-      console.log(`🔄 Rejoin attempt - roomId: ${roomId}, playerId: ${playerId}`)
-      console.log(`🏠 Available rooms:`, Object.keys(rooms))
-
       const room = rooms[roomId]
-
-      if (!room) {
-        console.log(`❌ Room not found: ${roomId}`)
-        return callback({ success: false, error: 'Room not found' })
-      }
+      if (!room) return callback({ success: false, error: 'Room not found' })
 
       const player = room.players.find(p => p.id === playerId)
+      if (!player) return callback({ success: false, error: 'Player not found' })
 
-      if (!player) {
-        console.log(`❌ Player not found: ${playerId}`)
-        return callback({ success: false, error: 'Player not found in room' })
-      }
-
-      // ✅ Update socket ID since it changed after page navigation
       player.socketId = socket.id
+      player.disconnected = false
       socket.join(roomId)
       socket.data.roomId = roomId
       socket.data.playerId = playerId
 
-      console.log(`✅ Player ${player.name} rejoined room ${roomId}`)
+      console.log(`✅ ${player.name} rejoined room ${roomId}`)
       callback({ success: true, room })
       io.to(roomId).emit('room-updated', { room })
     })
 
-    // ─── Join Room ─────────────────────────────────────────────────
     socket.on('join-room', ({ roomId, playerName }, callback) => {
       const room = rooms[roomId]
-
       if (!room) return callback({ success: false, error: 'Room not found' })
       if (room.phase !== 'lobby') return callback({ success: false, error: 'Game already in progress' })
-      if (room.players.length >= 20) return callback({ success: false, error: 'Room is full (max 20 players)' })
+      if (room.players.length >= 20) return callback({ success: false, error: 'Room is full' })
 
       const playerId = uuidv4()
       const player = {
@@ -153,13 +383,11 @@ app.prepare().then(() => {
       io.to(roomId).emit('room-updated', { room })
     })
 
-    // ─── Start Game ────────────────────────────────────────────────
     socket.on('start-game', ({ roomId }, callback) => {
       const room = rooms[roomId]
-
       if (!room) return callback({ success: false, error: 'Room not found' })
       if (room.players.length < room.minPlayers) {
-        return callback({ success: false, error: `Need at least ${room.minPlayers} players to start` })
+        return callback({ success: false, error: `Need at least ${room.minPlayers} players` })
       }
 
       room.players = assignRoles(room.players)
@@ -168,46 +396,53 @@ app.prepare().then(() => {
       io.to(roomId).emit('game-started', { room })
 
       room.players.forEach(player => {
-        const playerSocket = io.sockets.sockets.get(player.socketId)
-        if (playerSocket) {
-          playerSocket.emit('role-briefing', { role: player.role })
-        }
+        const s = getPlayerSocket(io, player.socketId)
+        if (s) s.emit('role-briefing', { role: player.role })
       })
 
-      setTimeout(() => {
-        if (rooms[roomId]) {
-          rooms[roomId].phase = 'night'
-          io.to(roomId).emit('room-updated', { room: rooms[roomId] })
-        }
-      }, 10000)
-
+      setPhaseTimer(roomId, () => startNightPhase(io, roomId), BRIEFING_DURATION)
       callback({ success: true })
     })
 
-    // ─── Night Action ──────────────────────────────────────────────
     socket.on('night-action', ({ targetId, actionType }, callback) => {
       const roomId = socket.data.roomId
       const playerId = socket.data.playerId
       const room = rooms[roomId]
-
-      if (!room) return callback({ success: false, error: 'Room not found' })
+      if (!room || room.phase !== 'night') return callback({ success: false })
 
       room.nightActions[playerId] = { targetId, actionType }
+      console.log(`🌙 ${actionType} by ${getPlayerName(room, playerId)} -> ${getPlayerName(room, targetId)}`)
 
+      // Detective gets immediate private result
+      if (actionType === 'detective-investigate' && targetId) {
+        const target = room.players.find(p => p.id === targetId)
+        if (target) {
+          const appearsAsMafia = isMafia(target.role) && target.role !== 'Godfather'
+          socket.emit('investigation-result', {
+            targetName: target.name,
+            isMafia: appearsAsMafia,
+            message: appearsAsMafia
+              ? `🔍 Investigation complete: ${target.name} IS MAFIA! Eliminate them tomorrow.`
+              : `🔍 Investigation complete: ${target.name} appears INNOCENT.`
+          })
+        }
+      }
+
+      // Resolve early if all active players have acted
       const activePlayers = room.players.filter(p =>
         p.isAlive &&
-        p.role !== 'Villager' &&
-        p.role !== 'Jester' &&
-        p.role !== 'Mayor'
+        ['Mafia', 'Godfather', 'Detective', 'Doctor', 'Bodyguard', 'Vigilante', 'RoleBlocker'].includes(p.role)
       )
       const allActed = activePlayers.every(p => room.nightActions[p.id])
-
-      if (allActed) resolveNight(io, room, roomId)
+      if (allActed) {
+        console.log(`✅ All active players acted in ${roomId} — resolving night early`)
+        clearPhaseTimer(roomId)
+        resolveNight(io, roomId)
+      }
 
       callback({ success: true })
     })
 
-    // ─── Chat Message ──────────────────────────────────────────────
     socket.on('chat-message', ({ message }) => {
       const roomId = socket.data.roomId
       const playerId = socket.data.playerId
@@ -225,57 +460,69 @@ app.prepare().then(() => {
       })
     })
 
-    // ─── Vote ──────────────────────────────────────────────────────
     socket.on('vote', ({ targetId }, callback) => {
       const roomId = socket.data.roomId
       const playerId = socket.data.playerId
       const room = rooms[roomId]
-
-      if (!room) return callback({ success: false, error: 'Room not found' })
+      if (!room || room.phase !== 'voting') return callback({ success: false })
 
       const voter = room.players.find(p => p.id === playerId)
-      room.votes[playerId] = { targetId, weight: voter?.role === 'Mayor' ? 2 : 1 }
+      if (!voter || !voter.isAlive) return callback({ success: false })
 
+      room.votes[playerId] = {
+        targetId,
+        weight: voter.role === 'Mayor' ? 2 : 1,
+        voterName: voter.name,
+      }
+
+      console.log(`🗳️ ${voter.name} voted for ${getPlayerName(room, targetId)}`)
+
+      // Broadcast live vote tally
+      const voteCounts = getVoteCounts(room)
+      io.to(roomId).emit('vote-updated', {
+        votes: room.votes,
+        voteCounts,
+        totalVoted: Object.keys(room.votes).length,
+        totalAlive: room.players.filter(p => p.isAlive).length,
+      })
+
+      // Resolve early if all alive players voted
       const alivePlayers = room.players.filter(p => p.isAlive)
       const allVoted = alivePlayers.every(p => room.votes[p.id])
-
-      io.to(roomId).emit('vote-updated', { votes: room.votes })
-
-      if (allVoted) resolveVoting(io, room, roomId)
+      if (allVoted) {
+        console.log(`✅ All players voted in ${roomId} — resolving early`)
+        clearPhaseTimer(roomId)
+        resolveVoting(io, roomId)
+      }
 
       callback({ success: true })
     })
 
-    // ─── Disconnect ────────────────────────────────────────────────
     socket.on('disconnect', () => {
-      console.log('Client disconnected:', socket.id)
       const roomId = socket.data.roomId
       const playerId = socket.data.playerId
       if (!roomId || !rooms[roomId]) return
 
       const room = rooms[roomId]
-
-      // ✅ Mark as disconnected instead of removing
-      // so they can rejoin after page navigation
       const player = room.players.find(p => p.id === playerId)
       if (player) {
         player.disconnected = true
+        console.log(`⚠️ ${player.name} disconnected from ${roomId}`)
       }
 
-      // ✅ Only delete room if ALL players have been disconnected for a while
       const allDisconnected = room.players.every(p => p.disconnected)
       if (allDisconnected) {
         setTimeout(() => {
-          // Double check they haven't reconnected
           if (rooms[roomId] && rooms[roomId].players.every(p => p.disconnected)) {
+            clearPhaseTimer(roomId)
             delete rooms[roomId]
-            console.log(`🗑️ Room ${roomId} deleted (all players disconnected)`)
+            console.log(`🗑️ Room ${roomId} deleted`)
           }
-        }, 30000) // 30 second grace period
+        }, 30000)
       } else {
-        if (!room.players.find(p => p.isHost && !p.disconnected)) {
-          const nextHost = room.players.find(p => !p.disconnected)
-          if (nextHost) nextHost.isHost = true
+        if (player?.isHost) {
+          const next = room.players.find(p => !p.disconnected)
+          if (next) next.isHost = true
         }
         io.to(roomId).emit('room-updated', { room })
       }
@@ -286,113 +533,3 @@ app.prepare().then(() => {
     console.log('> Ready on http://localhost:3000')
   })
 })
-
-// ─── Night Resolution ────────────────────────────────────────────────
-function resolveNight(io, room, roomId) {
-  const actions = room.nightActions
-  let killed = null
-  let protected_ = null
-  let blocked = []
-
-  Object.entries(actions).forEach(([playerId, action]) => {
-    if (action.actionType === 'block') blocked.push(action.targetId)
-  })
-
-  Object.entries(actions).forEach(([playerId, action]) => {
-    if (action.actionType === 'doctor-protect' && !blocked.includes(playerId)) {
-      protected_ = action.targetId
-    }
-  })
-
-  const mafiaKills = {}
-  Object.entries(actions).forEach(([playerId, action]) => {
-    if (action.actionType === 'mafia-kill' && !blocked.includes(playerId)) {
-      mafiaKills[action.targetId] = (mafiaKills[action.targetId] || 0) + 1
-    }
-  })
-
-  const mafiaTarget = Object.entries(mafiaKills).sort((a, b) => b[1] - a[1])[0]
-  if (mafiaTarget && mafiaTarget[0] !== protected_) {
-    killed = mafiaTarget[0]
-  }
-
-  Object.entries(actions).forEach(([playerId, action]) => {
-    if (action.actionType === 'vigilante-kill' && !blocked.includes(playerId)) {
-      const target = room.players.find(p => p.id === action.targetId)
-      if (target) target.isAlive = false
-    }
-  })
-
-  if (killed) {
-    const target = room.players.find(p => p.id === killed)
-    if (target) target.isAlive = false
-  }
-
-  room.nightActions = {}
-  room.currentDay += 1
-  room.phase = 'day'
-
-  const winner = checkWinCondition(room)
-  if (winner) {
-    room.phase = 'ended'
-    room.winner = winner
-  }
-
-  io.to(roomId).emit('room-updated', { room })
-
-  if (room.phase === 'day') {
-    setTimeout(() => {
-      if (rooms[roomId] && rooms[roomId].phase === 'day') {
-        rooms[roomId].phase = 'voting'
-        rooms[roomId].votes = {}
-        io.to(roomId).emit('room-updated', { room: rooms[roomId] })
-      }
-    }, 180000)
-  }
-}
-
-// ─── Voting Resolution ───────────────────────────────────────────────
-function resolveVoting(io, room, roomId) {
-  const voteCounts = {}
-
-  Object.values(room.votes).forEach(({ targetId, weight }) => {
-    voteCounts[targetId] = (voteCounts[targetId] || 0) + weight
-  })
-
-  const sorted = Object.entries(voteCounts).sort((a, b) => b[1] - a[1])
-  const topVotes = sorted[0]
-  const secondVotes = sorted[1]
-
-  if (secondVotes && topVotes[1] === secondVotes[1]) {
-    io.to(roomId).emit('vote-result', { eliminated: null, tie: true })
-  } else if (topVotes) {
-    const eliminated = room.players.find(p => p.id === topVotes[0])
-    if (eliminated) {
-      if (eliminated.role === 'Jester') {
-        io.to(roomId).emit('jester-wins', { player: eliminated })
-      }
-      eliminated.isAlive = false
-      io.to(roomId).emit('vote-result', { eliminated, tie: false })
-    }
-  }
-
-  room.votes = {}
-  room.phase = 'results'
-
-  const winner = checkWinCondition(room)
-  if (winner) {
-    room.phase = 'ended'
-    room.winner = winner
-  }
-
-  io.to(roomId).emit('room-updated', { room })
-
-  if (room.phase === 'results') {
-    setTimeout(() => {
-      if (rooms[roomId] && rooms[roomId].phase === 'results') {
-        rooms[roomId].phase = 'night'
-        io.to(roomId).emit('room-updated', { room: rooms[roomId] })
-      }
-    }, 5000)
-  }
-}
