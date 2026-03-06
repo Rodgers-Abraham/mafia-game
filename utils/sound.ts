@@ -1,44 +1,71 @@
-const sounds: { [key: string]: HTMLAudioElement } = {}
+// ── Sound Manager ─────────────────────────────────────────────────────
+const audioCache: { [key: string]: HTMLAudioElement } = {}
 
-const soundFiles: { [key: string]: string } = {
-  nightPhase: '/sounds/night-phase.mp3',
-  dayPhase: '/sounds/day-phase.mp3',
-  elimination: '/sounds/elimination.mp3',
-  vote: '/sounds/vote.mp3',
-  roleReveal: '/sounds/role-reveal.mp3',
-  gameOver: '/sounds/game-over.mp3',
-  win: '/sounds/win.mp3',
-  click: '/sounds/click.mp3',
+const SOUNDS = {
+  night:       '/sounds/night.mp3',
+  day:         '/sounds/day.mp3',
+  death:       '/sounds/death.mp3',
+  vote:        '/sounds/vote.mp3',
   investigate: '/sounds/investigate.mp3',
-  protect: '/sounds/protect.mp3',
+  cardFlip:    '/sounds/card-flip.mp3',
+  win:         '/sounds/win.mp3',
+  lose:        '/sounds/lose.mp3',
+  button:      '/sounds/button.mp3',
+  briefing:    '/sounds/briefing.mp3',
+} as const
+
+export type SoundName = keyof typeof SOUNDS
+
+function getAudio(name: SoundName): HTMLAudioElement | null {
+  if (typeof window === 'undefined') return null
+  if (!audioCache[name]) {
+    const audio = new Audio(SOUNDS[name])
+    audio.preload = 'auto'
+    audioCache[name] = audio
+  }
+  return audioCache[name]
 }
 
-export function playSound(name: keyof typeof soundFiles) {
-  if (typeof window === 'undefined') return
-
+export function playSound(name: SoundName, volume = 0.7, loop = false): void {
   try {
-    if (!sounds[name]) {
-      sounds[name] = new Audio(soundFiles[name])
-      sounds[name].volume = 0.5
-    }
-    sounds[name].currentTime = 0
-    sounds[name].play().catch(() => {
-      // Autoplay blocked — ignore silently
+    const audio = getAudio(name)
+    if (!audio) return
+    audio.volume = volume
+    audio.loop = loop
+    audio.currentTime = 0
+    audio.play().catch(() => {
+      // Browser autoplay policy — ignore silently
     })
   } catch (e) {
-    // Sound not found — ignore silently
+    // Ignore
   }
 }
 
-export function stopSound(name: keyof typeof soundFiles) {
-  if (sounds[name]) {
-    sounds[name].pause()
-    sounds[name].currentTime = 0
-  }
+export function stopSound(name: SoundName): void {
+  try {
+    const audio = audioCache[name]
+    if (!audio) return
+    audio.pause()
+    audio.currentTime = 0
+  } catch (e) {}
 }
 
-export function setVolume(name: keyof typeof soundFiles, volume: number) {
-  if (sounds[name]) {
-    sounds[name].volume = Math.min(1, Math.max(0, volume))
-  }
+export function stopAllSounds(): void {
+  Object.keys(audioCache).forEach(key => {
+    try {
+      audioCache[key].pause()
+      audioCache[key].currentTime = 0
+    } catch (e) {}
+  })
+}
+
+export function setVolume(name: SoundName, volume: number): void {
+  const audio = audioCache[name]
+  if (audio) audio.volume = Math.max(0, Math.min(1, volume))
+}
+
+// Preload all sounds
+export function preloadSounds(): void {
+  if (typeof window === 'undefined') return
+  Object.keys(SOUNDS).forEach(name => getAudio(name as SoundName))
 }
