@@ -1,5 +1,5 @@
 import { Room, Player, GamePhase, GameResult, GameState, GameAction } from '@/types/game'
-import { assignRoles, isMafia, generateRoomCode } from './gameLogic.js'
+import { assignRoles, isMafia, generateRoomCode } from './gameLogic'
 import { v4 as uuidv4 } from 'uuid'
 
 const NIGHT_PHASE_DURATION = 45000 // 45 seconds
