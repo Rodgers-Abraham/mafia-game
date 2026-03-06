@@ -1,3 +1,4 @@
+import getSocketUrl from '@/utils/getSocketUrl'
 import { useState } from 'react'
 import { useRouter } from 'next/router'
 import { io } from 'socket.io-client'
@@ -19,7 +20,7 @@ export default function CreateRoom() {
     setError('')
 
     try {
-      const socket = io('http://localhost:3000', { timeout: 5000 })
+      const socket = io(getSocketUrl(), { timeout: 5000 })
 
       socket.on('connect', () => {
         socket.emit('create-room', { playerName }, (response: any) => {

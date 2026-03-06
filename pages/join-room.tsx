@@ -1,3 +1,4 @@
+import getSocketUrl from '@/utils/getSocketUrl'
 import { useState } from 'react'
 import { useRouter } from 'next/router'
 import { io } from 'socket.io-client'
@@ -20,7 +21,7 @@ export default function JoinRoom() {
     setError('')
 
     try {
-      const socket = io('http://localhost:3000')
+      const socket = io(getSocketUrl())
 
       socket.on('connect', () => {
         socket.emit(

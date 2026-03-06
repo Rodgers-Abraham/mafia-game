@@ -1,3 +1,4 @@
+import getSocketUrl from '@/utils/getSocketUrl'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import { io } from 'socket.io-client'
@@ -157,7 +158,7 @@ export default function RoomPage() {
     }
 
     const localData = JSON.parse(storedData)
-    const socket = io('http://localhost:3000')
+    const socket = io(getSocketUrl())
     socketRef.current = socket
 
     socket.on('connect', () => {
