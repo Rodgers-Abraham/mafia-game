@@ -1,143 +1,254 @@
-import { Room } from '@/types/game'
-import { isMafia } from '@/utils/gameLogic'
 import { useRouter } from 'next/router'
+import { isMafia } from '@/utils/gameLogic'
+import { useEffect, useState } from 'react'
+import React from 'react'
+import { Room, Role } from '@/types/game'
 
 interface GameEndedProps {
   room: Room
 }
 
+const ROLE_EMOJIS: { [key: string]: string } = {
+  Mafia: '🔫', Godfather: '👑', Villager: '👤',
+  Detective: '🔍', Doctor: '💉', Bodyguard: '🛡️',
+  Vigilante: '⚔️', RoleBlocker: '🚫', Jester: '🤡', Mayor: '🏛️',
+}
+
+const ROLE_COLORS: { [key: string]: string } = {
+  Mafia: '#8B0000', Godfather: '#DC143C', Villager: '#aaa',
+  Detective: '#1E90FF', Doctor: '#00A86B', Bodyguard: '#708090',
+  Vigilante: '#FF6600', RoleBlocker: '#800080', Jester: '#FFD700', Mayor: '#DAA520',
+}
+
+const WINNER_CONFIG = {
+  mafia: {
+    title: 'MAFIA WINS',
+    subtitle: 'Darkness consumes the town',
+    emoji: '🔫',
+    color: '#DC143C',
+    bg: 'rgba(139,0,0,0.2)',
+    border: '#8B000066',
+  },
+  town: {
+    title: 'TOWN WINS',
+    subtitle: 'Justice has been served',
+    emoji: '⚖️',
+    color: '#00A86B',
+    bg: 'rgba(0,168,107,0.15)',
+    border: '#00A86B66',
+  },
+  jester: {
+    title: 'JESTER WINS',
+    subtitle: 'Chaos reigns supreme',
+    emoji: '🤡',
+    color: '#FFD700',
+    bg: 'rgba(255,215,0,0.1)',
+    border: '#FFD70066',
+  },
+}
+
 export default function GameEnded({ room }: GameEndedProps) {
   const router = useRouter()
+  const [revealed, setRevealed] = useState(false)
 
-  const getRoleEmoji = (role: string | null) => {
-    if (!role) return '❓'
-    const emojis: { [key: string]: string } = {
-      Mafia: '🔫',
-      Godfather: '👑',
-      Villager: '👨',
-      Detective: '🔍',
-      Doctor: '⚕️',
-      Bodyguard: '🛡️',
-      Vigilante: '⚔️',
-      RoleBlocker: '🚫',
-      Jester: '🤡',
-      Mayor: '🏛️',
-    }
-    return emojis[role] || '❓'
-  }
+  useEffect(() => {
+    const t = setTimeout(() => setRevealed(true), 500)
+    return () => clearTimeout(t)
+  }, [])
 
-  const mafiaCount = room.players.filter((p) => isMafia(p.role!)).length
+  const mafiaCount = room.players.filter((p) => p.role && isMafia(p.role)).length
   const villagerCount = room.players.length - mafiaCount
-  const jesterAlive = room.players.some((p) => p.role === 'Jester' && p.isAlive)
+  const jesterWon = room.players.some((p) => p.role === 'Jester' && p.isAlive)
 
-  let winner = 'town'
-  if (mafiaCount >= villagerCount) {
-    winner = 'mafia'
-  } else if (jesterAlive) {
-    winner = 'jester'
-  }
+  let winner: 'mafia' | 'town' | 'jester' = 'town'
+  if (mafiaCount >= villagerCount) winner = 'mafia'
+  else if (jesterWon) winner = 'jester'
 
-  const winnerMessage: { [key: string]: string } = {
-    mafia: '🔫 MAFIA WINS! 🔫',
-    town: '👨 TOWN WINS! 👨',
-    jester: '🤡 JESTER WINS! 🤡',
+  const config = WINNER_CONFIG[winner]
+
+  const isWinner = (role: Role | null) => {
+    if (!role) return false
+    if (winner === 'mafia') return isMafia(role)
+    if (winner === 'town') return !isMafia(role) && role !== 'Jester'
+    if (winner === 'jester') return role === 'Jester'
+    return false
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-mafia-dark to-mafia-darker p-8">
-      <div className="max-w-6xl mx-auto">
-        {/* Winner Announcement */}
-        <div className="text-center mb-12">
-          <h1 className="text-6xl font-bold mb-4">{winnerMessage[winner]}</h1>
-          <p className="text-2xl text-gray-400">Game Over</p>
+    <div className="min-h-screen p-6 md:p-8">
+      <div className="max-w-5xl mx-auto animate-fadeIn">
+
+        {/* Winner announcement */}
+        <div
+          className="text-center rounded-2xl border-2 p-10 mb-10"
+          style={{
+            borderColor: config.border,
+            backgroundColor: config.bg,
+            boxShadow: `0 0 60px ${config.color}33`,
+          }}
+        >
+          <div
+            className="text-8xl mb-4 animate-float"
+            style={{ filter: `drop-shadow(0 0 30px ${config.color})` }}
+          >
+            {config.emoji}
+          </div>
+          <h1
+            className="spooky-title mb-2"
+            style={{
+              fontSize: '4rem',
+              color: config.color,
+              textShadow: `0 0 30px ${config.color}`,
+            }}
+          >
+            {config.title}
+          </h1>
+          <p className="text-gray-400 spooky-title tracking-widest text-lg">
+            {config.subtitle}
+          </p>
         </div>
 
-        {/* Player Results */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+        {/* Winners vs Losers */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+
           {/* Winners */}
           <div>
-            <h2 className="text-3xl font-bold mb-6 text-green-400">Winners</h2>
+            <h2
+              className="spooky-title tracking-widest text-sm mb-4 text-center"
+              style={{ color: '#00A86B' }}
+            >
+              -- VICTORS --
+            </h2>
             <div className="space-y-3">
-              {room.players
-                .filter((p) => {
-                  if (winner === 'mafia') return isMafia(p.role!)
-                  if (winner === 'town') return !isMafia(p.role!) && p.role !== 'Jester'
-                  if (winner === 'jester') return p.role === 'Jester'
-                  return false
-                })
-                .map((p) => (
+              {room.players.filter(p => p.role && isWinner(p.role)).map((p, idx) => {
+                const roleColor = p.role ? (ROLE_COLORS[p.role] || '#aaa') : '#aaa'
+                return (
                   <div
                     key={p.id}
-                    className="bg-mafia-card border border-green-600 rounded-lg p-4 flex items-center gap-4"
+                    className="animate-slideUp flex items-center gap-4 p-4 rounded-xl border"
+                    style={{
+                      animationDelay: `${idx * 0.1}s`,
+                      borderColor: '#00A86B33',
+                      backgroundColor: 'rgba(0,168,107,0.08)',
+                    }}
                   >
-                    <div className="text-3xl">{getRoleEmoji(p.role)}</div>
-                    <div className="flex-1">
-                      <div className="font-semibold text-lg">{p.name}</div>
-                      <div className="text-sm text-gray-400">{p.role}</div>
+                    <div
+                      className="text-3xl"
+                      style={{ filter: `drop-shadow(0 0 8px ${roleColor})` }}
+                    >
+                      {p.role ? ROLE_EMOJIS[p.role] || '❓' : '❓'}
                     </div>
-                    <div className="text-green-400 font-bold">✓ Winner</div>
+                    <div className="flex-1">
+                      <div className="font-semibold text-white">{p.name}</div>
+                      <div
+                        className="text-xs spooky-title tracking-wider"
+                        style={{ color: roleColor }}
+                      >
+                        {p.role}
+                      </div>
+                    </div>
+                    <div className="text-xs spooky-title" style={{ color: '#00A86B' }}>
+                      {p.isAlive ? 'SURVIVED' : 'FALLEN'}
+                    </div>
                   </div>
-                ))}
+                )
+              })}
             </div>
           </div>
 
           {/* Losers */}
           <div>
-            <h2 className="text-3xl font-bold mb-6 text-red-400">Losers</h2>
+            <h2
+              className="spooky-title tracking-widest text-sm mb-4 text-center"
+              style={{ color: '#8B0000' }}
+            >
+              -- DEFEATED --
+            </h2>
             <div className="space-y-3">
-              {room.players
-                .filter((p) => {
-                  if (winner === 'mafia') return !isMafia(p.role!)
-                  if (winner === 'town') return isMafia(p.role!)
-                  if (winner === 'jester') return p.role !== 'Jester'
-                  return false
-                })
-                .map((p) => (
+              {room.players.filter(p => p.role && !isWinner(p.role)).map((p, idx) => {
+                const roleColor = p.role ? (ROLE_COLORS[p.role] || '#aaa') : '#aaa'
+                return (
                   <div
                     key={p.id}
-                    className="bg-mafia-card border border-red-600 rounded-lg p-4 flex items-center gap-4 opacity-75"
+                    className="animate-slideUp flex items-center gap-4 p-4 rounded-xl border opacity-70"
+                    style={{
+                      animationDelay: `${idx * 0.1}s`,
+                      borderColor: '#8B000033',
+                      backgroundColor: 'rgba(139,0,0,0.08)',
+                    }}
                   >
-                    <div className="text-3xl">{getRoleEmoji(p.role)}</div>
-                    <div className="flex-1">
-                      <div className="font-semibold text-lg">{p.name}</div>
-                      <div className="text-sm text-gray-400">{p.role}</div>
+                    <div className="text-3xl grayscale">
+                      {p.role ? ROLE_EMOJIS[p.role] || '❓' : '❓'}
                     </div>
-                    <div className="text-red-400 font-bold">✗ Loser</div>
+                    <div className="flex-1">
+                      <div className="font-semibold text-gray-400 line-through">{p.name}</div>
+                      <div className="text-xs spooky-title tracking-wider text-gray-600">
+                        {p.role}
+                      </div>
+                    </div>
+                    <div className="text-xs spooky-title text-gray-700">DEFEATED</div>
                   </div>
-                ))}
+                )
+              })}
             </div>
           </div>
         </div>
 
-        {/* All Players Roles */}
-        <div className="bg-mafia-card border border-mafia-border rounded-lg p-6 mb-12">
-          <h2 className="text-2xl font-bold mb-6">Final Standings</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {room.players.map((p) => (
-              <div
-                key={p.id}
-                className={`p-4 rounded-lg border text-center ${
-                  p.isAlive ? 'border-green-600 bg-green-900 bg-opacity-10' : 'border-gray-600 bg-gray-900 bg-opacity-10'
-                }`}
-              >
-                <div className="text-3xl mb-2">{getRoleEmoji(p.role)}</div>
-                <div className="font-semibold">{p.name}</div>
-                <div className="text-sm text-gray-400 mt-1">{p.role}</div>
-                <div className="text-xs mt-2 text-gray-500">{p.isAlive ? '✓ Alive' : '✗ Dead'}</div>
-              </div>
-            ))}
+        {/* Final standings */}
+        <div
+          className="rounded-2xl border p-6 mb-10"
+          style={{ borderColor: '#3d002044', backgroundColor: 'rgba(0,0,0,0.5)' }}
+        >
+          <h2 className="spooky-title tracking-widest text-xs text-gray-600 text-center mb-6">
+            -- FINAL STANDINGS --
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {room.players.map((p, idx) => {
+              const roleColor = p.role ? (ROLE_COLORS[p.role] || '#aaa') : '#aaa'
+              return (
+                <div
+                  key={p.id}
+                  className="rounded-xl p-3 text-center border"
+                  style={{
+                    borderColor: p.isAlive ? `${roleColor}44` : '#1a1a1a',
+                    backgroundColor: p.isAlive ? `${roleColor}11` : 'rgba(0,0,0,0.3)',
+                    opacity: p.isAlive ? 1 : 0.5,
+                  }}
+                >
+                  <div className={`text-2xl mb-1 ${!p.isAlive ? 'grayscale' : ''}`}>
+                    {p.role ? ROLE_EMOJIS[p.role] || '❓' : '❓'}
+                  </div>
+                  <div className="text-xs font-semibold text-gray-300 truncate">{p.name}</div>
+                  <div
+                    className="text-xs spooky-title mt-1"
+                    style={{ color: p.isAlive ? roleColor : '#444' }}
+                  >
+                    {p.role || 'Unknown'}
+                  </div>
+                  <div className="text-xs mt-1" style={{ color: p.isAlive ? '#00A86B' : '#555' }}>
+                    {p.isAlive ? 'ALIVE' : 'DEAD'}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </div>
 
         {/* Actions */}
-        <div className="text-center space-y-4">
+        <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <button
             onClick={() => router.push('/')}
-            className="px-8 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition"
+            className="px-10 py-4 rounded-xl font-bold spooky-title tracking-wider text-lg transition-all duration-300 hover:scale-105 glow-red"
+            style={{
+              backgroundColor: '#8B0000',
+              border: '2px solid #DC143C',
+              color: 'white',
+            }}
           >
-            Return to Home
+            🏠 RETURN HOME
           </button>
         </div>
+
       </div>
     </div>
   )

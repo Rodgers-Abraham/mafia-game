@@ -1,6 +1,6 @@
 import { Room } from '@/types/game'
 import { io } from 'socket.io-client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 type ClientSocket = ReturnType<typeof io>
 
@@ -11,9 +11,17 @@ interface LobbyProps {
 
 export default function Lobby({ room, socket }: LobbyProps) {
   const [copied, setCopied] = useState(false)
+  const [pulse, setPulse] = useState(false)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const handleStartGame = () => {
     if (!socket) return
+    setPulse(true)
+    setTimeout(() => setPulse(false), 500)
     socket.emit('start-game', { roomId: room.id }, (response: any) => {
       if (!response.success) {
         alert(response.error || 'Failed to start game')
@@ -27,71 +35,131 @@ export default function Lobby({ room, socket }: LobbyProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const isHost = localStorage.getItem('isHost') === 'true'
+  const isHost = mounted ? localStorage.getItem('isHost') === 'true' : false
   const minPlayers = room.minPlayers ?? 4
   const maxPlayers = room.maxPlayers ?? 20
+  const canStart = room.players.length >= minPlayers
+
+  // Assign a consistent spooky avatar per player
+  const avatars = ['🕵️', '🧛', '👻', '💀', '🎭', '🦹', '🧟', '👁️', '🔪', '🕯️']
 
   return (
-    <div className="min-h-screen bg-mafia-dark p-8">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen p-6 md:p-8">
+      <div className="max-w-6xl mx-auto animate-fadeIn">
 
-        {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-5xl font-bold mb-4">🔫 MAFIA GAME</h1>
-          <p className="text-gray-400 mb-6">Share the room code with your friends</p>
-          <div className="flex justify-center gap-4 items-center">
-            <div className="text-3xl font-mono bg-mafia-card px-6 py-3 rounded border-2 border-red-600 tracking-widest">
-              {room.id}
+        {/* ── Header ─────────────────────────────── */}
+        <div className="text-center mb-10">
+          <div className="flex justify-center gap-6 mb-4 text-3xl">
+            <span className="candle-flicker">🕯️</span>
+            <span className="animate-float">💀</span>
+            <span className="candle-flicker" style={{ animationDelay: '1s' }}>🕯️</span>
+          </div>
+
+          <h1 className="blood-text spooky-title mb-1" style={{ fontSize: '3.5rem' }}>
+            MAFIA LOBBY
+          </h1>
+          <p className="text-gray-500 tracking-widest text-sm spooky-title">
+            ── AWAITING PLAYERS ──
+          </p>
+        </div>
+
+        {/* ── Room Code ──────────────────────────── */}
+        <div className="flex justify-center mb-10">
+          <div className="bg-black bg-opacity-60 border-2 border-red-900 rounded-xl p-6 text-center glow-red">
+            <p className="text-gray-500 text-xs tracking-widest spooky-title mb-2">
+              ROOM CODE
+            </p>
+            <div className="flex items-center gap-4">
+              <span
+                className="text-4xl font-mono tracking-widest text-red-400 spooky-title"
+                style={{ textShadow: '0 0 20px rgba(220,20,60,0.8)' }}
+              >
+                {room.id}
+              </span>
+              <button
+                onClick={copyRoomCode}
+                className="px-3 py-2 bg-red-900 hover:bg-red-800 border border-red-700 rounded-lg text-sm transition-all duration-200 hover:scale-105"
+              >
+                {copied ? '✓ Copied!' : '📋 Copy'}
+              </button>
             </div>
-            <button
-              onClick={copyRoomCode}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition"
-            >
-              {copied ? '✓ Copied' : 'Copy Code'}
-            </button>
+            <p className="text-gray-600 text-xs mt-2">Share this code with your friends</p>
           </div>
         </div>
 
-        {/* Players Grid */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold mb-6">
-            Players in Room ({room.players.length}/{maxPlayers})
+        {/* ── Players Grid ───────────────────────── */}
+        <div className="mb-10">
+          <h2 className="spooky-title text-center text-xl tracking-widest text-gray-400 mb-6">
+            ── PLAYERS ({room.players.length}/{maxPlayers}) ──
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {room.players.map((player) => (
+
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            {room.players.map((player, idx) => (
               <div
                 key={player.id}
-                className="bg-mafia-card border border-mafia-border rounded-lg p-4 text-center hover:border-red-500 transition"
+                className="animate-slideUp bg-black bg-opacity-60 border border-red-900 hover:border-red-600 rounded-xl p-4 text-center transition-all duration-300 hover:scale-105 hover:glow-red"
+                style={{ animationDelay: `${idx * 0.1}s` }}
               >
-                <div className="text-2xl mb-2">👤</div>
-                <div className="font-semibold text-lg">{player.name}</div>
+                <div className="text-3xl mb-2">
+                  {avatars[idx % avatars.length]}
+                </div>
+                <div className="font-semibold text-white truncate">
+                  {player.name}
+                </div>
                 {player.isHost && (
-                  <div className="text-yellow-400 text-sm mt-2">👑 HOST</div>
+                  <div
+                    className="text-xs mt-2 spooky-title tracking-wider"
+                    style={{ color: '#FFD700', textShadow: '0 0 10px rgba(255,215,0,0.6)' }}
+                  >
+                    👑 HOST
+                  </div>
                 )}
+              </div>
+            ))}
+
+            {/* Empty slots */}
+            {Array.from({ length: Math.max(0, minPlayers - room.players.length) }).map((_, i) => (
+              <div
+                key={`empty-${i}`}
+                className="bg-black bg-opacity-30 border border-dashed border-gray-800 rounded-xl p-4 text-center"
+              >
+                <div className="text-3xl mb-2 opacity-20">👤</div>
+                <div className="text-gray-700 text-sm">Waiting...</div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Start Game Button - Host only */}
+        {/* ── Start Game / Waiting ────────────────── */}
         {isHost ? (
           <div className="text-center">
             <button
               onClick={handleStartGame}
-              disabled={room.players.length < minPlayers}
-              className="px-8 py-4 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg font-bold text-xl transition"
+              disabled={!canStart}
+              className={`relative px-12 py-5 rounded-xl font-bold text-2xl spooky-title tracking-wider transition-all duration-300 ${
+                canStart
+                  ? 'bg-red-900 hover:bg-red-800 border-2 border-red-500 glow-red hover:scale-105 animate-pulse'
+                  : 'bg-gray-900 border-2 border-gray-700 cursor-not-allowed opacity-50'
+              } ${pulse ? 'animate-shake' : ''}`}
             >
-              Start Game ({room.players.length} players)
+              {canStart ? '🔫 START GAME' : `⏳ NEED ${minPlayers - room.players.length} MORE`}
             </button>
-            <p className="text-gray-400 mt-4">
-              {room.players.length < minPlayers
-                ? `Need ${minPlayers - room.players.length} more player(s) to start`
-                : '✅ Ready to start!'}
+
+            <p className="text-gray-600 text-sm mt-4 tracking-widest spooky-title">
+              {canStart
+                ? `✅ ${room.players.length} PLAYERS READY`
+                : `MINIMUM ${minPlayers} PLAYERS REQUIRED`}
             </p>
           </div>
         ) : (
-          <div className="text-center text-gray-400">
-            <p>Waiting for host to start the game...</p>
+          <div className="text-center">
+            <div className="inline-flex items-center gap-3 px-8 py-4 bg-black bg-opacity-50 border border-gray-800 rounded-xl">
+              <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse" />
+              <p className="text-gray-400 spooky-title tracking-widest">
+                WAITING FOR HOST TO START...
+              </p>
+              <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse" style={{ animationDelay: '0.5s' }} />
+            </div>
           </div>
         )}
 
