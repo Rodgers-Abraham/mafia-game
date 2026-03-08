@@ -67,3 +67,16 @@ export interface GameResult {
   day: number
   night: boolean
 }
+
+export interface GameState {
+  roomId: string
+  phase: GamePhase
+  currentDay: number
+  alivePlayers: string[]
+  deadPlayers: string[]
+  mafiaCount: number
+  villagerCount: number
+  lastEliminated?: GameResult
+  votes?: { [playerId: string]: string }
+  winningTeam?: 'mafia' | 'town' | 'jester'
+}
