@@ -1,6 +1,6 @@
 import { Room, Player } from '@/types/game'
 import { io } from 'socket.io-client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { isMafia } from '@/utils/gameLogic'
 import { playSound, stopSound, stopAllSounds } from '@/utils/sound'
 import React from 'react'
@@ -11,6 +11,7 @@ interface NightPhaseProps {
   room: Room
   player: Player | null
   socket: ClientSocket | null
+  mafiaTeammates: { id: string; name: string; role: string; color: string }[]
 }
 
 const ROLE_CONFIG: { [key: string]: { color: string; actionLabel: string; actionEmoji: string } } = {
@@ -24,12 +25,21 @@ const ROLE_CONFIG: { [key: string]: { color: string; actionLabel: string; action
   Villager:    { color: '#aaaaaa', actionLabel: 'No night action',           actionEmoji: '👤' },
 }
 
-const avatars = ['🕵️', '🧛', '👻', '💀', '🎭', '🦹', '🧟', '👁️', '🔪', '🕯️']
+interface MafiaMessage {
+  playerId: string
+  playerName: string
+  playerColor: string
+  message: string
+  timestamp: number
+}
 
-export default function NightPhase({ room, player, socket }: NightPhaseProps) {
+export default function NightPhase({ room, player, socket, mafiaTeammates }: NightPhaseProps) {
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState(false)
-  const [timeLeft, setTimeLeft] = useState(45)
+  const [timeLeft, setTimeLeft] = useState(90)
+  const [mafiaMessages, setMafiaMessages] = useState<MafiaMessage[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const chatEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     stopAllSounds()
@@ -38,9 +48,21 @@ export default function NightPhase({ room, player, socket }: NightPhaseProps) {
   }, [])
 
   useEffect(() => {
-    const interval = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000)
+    const interval = setInterval(() => setTimeLeft(t => Math.max(0, t - 1)), 1000)
     return () => clearInterval(interval)
   }, [])
+
+  useEffect(() => {
+    if (!socket) return
+    socket.on('mafia-chat-message', (msg: MafiaMessage) => {
+      setMafiaMessages(prev => [...prev, msg])
+    })
+    return () => { socket.off('mafia-chat-message') }
+  }, [socket])
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [mafiaMessages])
 
   if (!player || !player.role) {
     return (
@@ -55,8 +77,9 @@ export default function NightPhase({ room, player, socket }: NightPhaseProps) {
 
   const role = player.role
   const config = ROLE_CONFIG[role] || ROLE_CONFIG['Villager']
-  const alivePlayers = room.players.filter((p) => p.isAlive && p.id !== player.id)
+  const alivePlayers = room.players.filter(p => p.isAlive && p.id !== player.id)
   const hasNightAction = isMafia(role) || ['Detective','Doctor','Bodyguard','Vigilante','RoleBlocker'].includes(role)
+  const isMafiaPlayer = isMafia(role)
 
   const handleSelectTarget = (id: string) => {
     if (submitted) return
@@ -73,21 +96,25 @@ export default function NightPhase({ room, player, socket }: NightPhaseProps) {
     else if (role === 'Bodyguard') actionType = 'bodyguard-guard'
     else if (role === 'Vigilante') actionType = 'vigilante-kill'
     else if (role === 'RoleBlocker') actionType = 'block'
-
     if (role === 'Detective') playSound('investigate', 0.8)
     else playSound('button', 0.6)
-
     socket.emit('night-action', { targetId: selectedTarget, actionType }, (response: { success: boolean }) => {
       if (response.success) setSubmitted(true)
-      else alert('Failed to submit action')
     })
+  }
+
+  const sendMafiaChat = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!chatInput.trim() || !socket) return
+    socket.emit('mafia-chat', { message: chatInput.trim() })
+    setChatInput('')
   }
 
   return (
     <div className="min-h-screen p-6 md:p-8 night-bg">
       <div className="max-w-6xl mx-auto animate-fadeIn">
 
-        <div className="text-center mb-10">
+        <div className="text-center mb-8">
           <div className="flex justify-center gap-6 mb-4 text-3xl">
             <span className="candle-flicker">🕯️</span>
             <span className="animate-float text-4xl">🌙</span>
@@ -96,18 +123,18 @@ export default function NightPhase({ room, player, socket }: NightPhaseProps) {
           <h1 className="spooky-title mb-1" style={{ fontSize: '3.5rem', color: '#4a6fa5', textShadow: '0 0 30px rgba(74,111,165,0.8)' }}>
             NIGHT PHASE
           </h1>
-          <p className="text-gray-500 tracking-widest text-sm spooky-title">
-            -- NIGHT {Math.ceil(room.currentDay / 2)} -- THE CITY SLEEPS --
-          </p>
+          <p className="text-gray-500 tracking-widest text-sm spooky-title">-- THE CITY SLEEPS --</p>
           <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full border border-gray-800 bg-black bg-opacity-50">
-            <div className={`w-2 h-2 rounded-full ${timeLeft <= 10 ? 'bg-red-500 animate-pulse' : 'bg-blue-800'}`} />
-            <span className={`spooky-title tracking-widest text-sm ${timeLeft <= 10 ? 'text-red-400' : 'text-gray-500'}`}>
+            <div className={`w-2 h-2 rounded-full ${timeLeft <= 15 ? 'bg-red-500 animate-pulse' : 'bg-blue-800'}`} />
+            <span className={`spooky-title tracking-widest text-sm ${timeLeft <= 15 ? 'text-red-400' : 'text-gray-500'}`}>
               {timeLeft}s REMAINING
             </span>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+          {/* Role panel */}
           <div className="lg:col-span-1">
             <div className="rounded-xl border p-6 sticky top-8" style={{ borderColor: `${config.color}44`, backgroundColor: `${config.color}11`, boxShadow: `0 0 30px ${config.color}22` }}>
               <div className="text-center mb-6">
@@ -115,10 +142,28 @@ export default function NightPhase({ room, player, socket }: NightPhaseProps) {
                 <h2 className="spooky-title text-2xl font-bold" style={{ color: config.color }}>{role}</h2>
                 <p className="text-gray-500 text-xs tracking-widest mt-1 spooky-title">YOUR ROLE</p>
               </div>
+
+              {/* Mafia teammates */}
+              {isMafiaPlayer && mafiaTeammates.length > 0 && (
+                <div className="mb-4 p-3 rounded-lg border" style={{ borderColor: '#8B000044', backgroundColor: 'rgba(139,0,0,0.1)' }}>
+                  <p className="text-xs text-red-900 spooky-title tracking-widest mb-2">YOUR TEAM</p>
+                  {mafiaTeammates.map(t => (
+                    <div key={t.id} className="flex items-center gap-2 py-1">
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: t.color }}>
+                        {t.name[0].toUpperCase()}
+                      </div>
+                      <span className="text-sm text-gray-300">{t.name}</span>
+                      <span className="text-xs text-red-800 ml-auto spooky-title">{t.role}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="rounded-lg p-4 mb-4 border" style={{ borderColor: `${config.color}33`, backgroundColor: 'rgba(0,0,0,0.4)' }}>
                 <p className="text-xs text-gray-500 spooky-title tracking-widest mb-1">TONIGHT'S MISSION</p>
-                <p className="text-gray-200">{config.actionLabel}</p>
+                <p className="text-gray-200 text-sm">{config.actionLabel}</p>
               </div>
+
               {hasNightAction && !submitted && (
                 <button
                   onClick={handleSubmitAction}
@@ -142,50 +187,94 @@ export default function NightPhase({ room, player, socket }: NightPhaseProps) {
             </div>
           </div>
 
-          <div className="lg:col-span-2">
-            <h2 className="spooky-title text-xl tracking-widest text-gray-400 mb-6 text-center">-- SELECT YOUR TARGET --</h2>
-            {!hasNightAction ? (
+          {/* Targets + mafia chat */}
+          <div className="lg:col-span-2 space-y-6">
+            {hasNightAction && (
+              <div>
+                <h2 className="spooky-title text-lg tracking-widest text-gray-400 mb-4 text-center">-- SELECT YOUR TARGET --</h2>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {alivePlayers.map((target, idx) => (
+                    <button
+                      key={target.id}
+                      onClick={() => handleSelectTarget(target.id)}
+                      disabled={submitted}
+                      className="animate-slideUp p-4 rounded-xl border-2 transition-all duration-300 text-center hover:scale-105 disabled:cursor-not-allowed"
+                      style={{
+                        animationDelay: `${idx * 0.1}s`,
+                        borderColor: selectedTarget === target.id ? config.color : '#2a0010',
+                        backgroundColor: selectedTarget === target.id ? `${config.color}22` : 'rgba(0,0,0,0.5)',
+                        boxShadow: selectedTarget === target.id ? `0 0 20px ${config.color}66` : 'none',
+                      }}
+                    >
+                      <div
+                        className="w-10 h-10 rounded-full mx-auto mb-2 flex items-center justify-center text-sm font-bold"
+                        style={{ backgroundColor: target.color, boxShadow: `0 0 8px ${target.color}88` }}
+                      >
+                        {target.name[0].toUpperCase()}
+                      </div>
+                      <div className="font-semibold text-white text-sm">{target.name}</div>
+                      {selectedTarget === target.id && (
+                        <div className="text-xs mt-1 spooky-title tracking-wider animate-fadeIn" style={{ color: config.color }}>TARGETED</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!hasNightAction && (
               <div className="flex items-center justify-center h-48">
                 <div className="text-center">
                   <div className="text-6xl mb-4 animate-float">😴</div>
                   <p className="text-gray-600 spooky-title tracking-widest">THE INNOCENT SLEEP SOUNDLY</p>
                 </div>
               </div>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {alivePlayers.map((target, idx) => (
-                  <button
-                    key={target.id}
-                    onClick={() => handleSelectTarget(target.id)}
-                    disabled={submitted}
-                    className="animate-slideUp p-4 rounded-xl border-2 transition-all duration-300 text-center hover:scale-105 disabled:cursor-not-allowed"
-                    style={{
-                      animationDelay: `${idx * 0.1}s`,
-                      borderColor: selectedTarget === target.id ? config.color : '#2a0010',
-                      backgroundColor: selectedTarget === target.id ? `${config.color}22` : 'rgba(0,0,0,0.5)',
-                      boxShadow: selectedTarget === target.id ? `0 0 20px ${config.color}66` : 'none',
-                    }}
-                  >
-                    <div className="text-3xl mb-2">{avatars[idx % avatars.length]}</div>
-                    <div className="font-semibold text-white">{target.name}</div>
-                    {selectedTarget === target.id && (
-                      <div className="text-xs mt-1 spooky-title tracking-wider animate-fadeIn" style={{ color: config.color }}>TARGETED</div>
+            )}
+
+            {/* Mafia chat */}
+            {isMafiaPlayer && (
+              <div>
+                <h2 className="spooky-title text-lg tracking-widest mb-3" style={{ color: '#8B0000' }}>🔫 MAFIA CHANNEL</h2>
+                <div className="rounded-xl border flex flex-col" style={{ height: '220px', borderColor: '#8B000044', backgroundColor: 'rgba(139,0,0,0.08)' }}>
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                    {mafiaMessages.length === 0 && (
+                      <div className="h-full flex items-center justify-center">
+                        <p className="text-red-900 spooky-title tracking-widest text-xs">COORDINATE YOUR KILL...</p>
+                      </div>
                     )}
-                  </button>
-                ))}
+                    {mafiaMessages.map((msg, idx) => (
+                      <div key={idx} className="flex items-start gap-2 animate-fadeIn">
+                        <div className="w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold mt-0.5" style={{ backgroundColor: msg.playerColor }}>
+                          {msg.playerName[0].toUpperCase()}
+                        </div>
+                        <div>
+                          <span className="text-xs font-semibold spooky-title" style={{ color: msg.playerColor }}>{msg.playerName}</span>
+                          <p className="text-gray-300 text-sm break-words">{msg.message}</p>
+                        </div>
+                      </div>
+                    ))}
+                    <div ref={chatEndRef} />
+                  </div>
+                  <form onSubmit={sendMafiaChat} className="border-t p-2 flex gap-2" style={{ borderColor: '#8B000033' }}>
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={e => setChatInput(e.target.value)}
+                      placeholder="Speak only to your kind..."
+                      maxLength={200}
+                      className="flex-1 px-3 py-1.5 rounded-lg text-white placeholder-gray-700 focus:outline-none text-sm"
+                      style={{ backgroundColor: 'rgba(0,0,0,0.5)', border: '1px solid #8B000033' }}
+                    />
+                    <button type="submit" className="px-3 py-1.5 rounded-lg text-xs spooky-title tracking-wider transition-all hover:scale-105" style={{ backgroundColor: '#5a0000', border: '1px solid #8B000066', color: '#ff6666' }}>
+                      SEND
+                    </button>
+                  </form>
+                </div>
               </div>
             )}
+
           </div>
         </div>
-
-        {isMafia(role) && (
-          <div className="mt-10">
-            <div className="rounded-xl border p-6" style={{ borderColor: '#8B000044', backgroundColor: 'rgba(139,0,0,0.1)' }}>
-              <h3 className="spooky-title text-xl tracking-widest text-red-800 mb-2">🔫 MAFIA CHANNEL</h3>
-              <p className="text-gray-600 text-sm">Coordinate with your fellow Mafia members. Only Mafia can see this.</p>
-            </div>
-          </div>
-        )}
 
       </div>
     </div>
