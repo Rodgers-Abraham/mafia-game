@@ -2,10 +2,10 @@ import { Room, Player, GamePhase, GameResult, GameState, GameAction } from '@/ty
 import { assignRoles, isMafia, generateRoomCode } from './gameLogic'
 import { v4 as uuidv4 } from 'uuid'
 
-const NIGHT_PHASE_DURATION = 45000 // 45 seconds
-const DISCUSSION_PHASE_DURATION = 120000 // 2 minutes
-const VOTING_PHASE_DURATION = 60000 // 1 minute
-const BRIEFING_PHASE_DURATION = 10000 // 10 seconds
+const NIGHT_PHASE_DURATION = 45000
+const DISCUSSION_PHASE_DURATION = 120000
+const VOTING_PHASE_DURATION = 60000
+const BRIEFING_PHASE_DURATION = 10000
 
 export class GameManager {
   private rooms: Map<string, Room> = new Map()
@@ -20,8 +20,6 @@ export class GameManager {
 
     const room: Room = {
       id: roomId,
-      code,
-      host: hostId,
       players: [
         {
           id: hostId,
@@ -30,14 +28,18 @@ export class GameManager {
           isAlive: true,
           isHost: true,
           socketId: hostId,
+          color: '#e74c3c',
         },
       ],
       phase: 'lobby',
       maxPlayers: 20,
-      createdAt: Date.now(),
+      minPlayers: 4,
       currentDay: 0,
       conversationTimer: 0,
       voteTimer: 0,
+      nightActions: {},
+      votes: {},
+      lobbyMessages: [],
     }
 
     this.rooms.set(roomId, room)
@@ -45,11 +47,8 @@ export class GameManager {
   }
 
   addPlayerToRoom(roomCode: string, playerId: string, playerName: string): Room | null {
-    const room = Array.from(this.rooms.values()).find((r) => r.code === roomCode)
-
-    if (!room || room.players.length >= room.maxPlayers || room.phase !== 'lobby') {
-      return null
-    }
+    const room = Array.from(this.rooms.values()).find((r) => r.id === roomCode)
+    if (!room || room.players.length >= room.maxPlayers || room.phase !== 'lobby') return null
 
     room.players.push({
       id: playerId,
@@ -58,6 +57,7 @@ export class GameManager {
       isAlive: true,
       isHost: false,
       socketId: playerId,
+      color: '#3498db',
     })
 
     return room
@@ -68,7 +68,7 @@ export class GameManager {
   }
 
   getRoomByCode(code: string): Room | undefined {
-    return Array.from(this.rooms.values()).find((r) => r.code === code)
+    return Array.from(this.rooms.values()).find((r) => r.id === code)
   }
 
   startGame(roomId: string): boolean {
@@ -76,16 +76,13 @@ export class GameManager {
     if (!room || room.players.length < 3) return false
 
     room.phase = 'briefing'
-    room.gameStartTime = Date.now()
     room.currentDay = 1
 
-    // Assign roles
     const roles = assignRoles(room.players.length)
     room.players.forEach((player, index) => {
       player.role = roles[index]
     })
 
-    // Initialize game state
     const gameState: GameState = {
       roomId,
       phase: 'briefing',
@@ -97,61 +94,32 @@ export class GameManager {
     }
 
     this.gameStates.set(roomId, gameState)
-
-    // Set briefing timer
-    this.phaseTimers.set(
-      roomId,
-      setTimeout(() => {
-        this.transitionToNight(roomId)
-      }, BRIEFING_PHASE_DURATION)
-    )
-
+    this.phaseTimers.set(roomId, setTimeout(() => this.transitionToNight(roomId), BRIEFING_PHASE_DURATION))
     return true
   }
 
   transitionToNight(roomId: string): void {
     const room = this.rooms.get(roomId)
     if (!room) return
-
     room.phase = 'night'
     this.nightActions.set(roomId, [])
-
-    this.phaseTimers.set(
-      roomId,
-      setTimeout(() => {
-        this.resolveNightActions(roomId)
-      }, NIGHT_PHASE_DURATION)
-    )
+    this.phaseTimers.set(roomId, setTimeout(() => this.resolveNightActions(roomId), NIGHT_PHASE_DURATION))
   }
 
   transitionToDay(roomId: string): void {
     const room = this.rooms.get(roomId)
     if (!room) return
-
     room.phase = 'day'
     room.currentDay++
     this.voteActions.set(roomId, {})
-
-    this.phaseTimers.set(
-      roomId,
-      setTimeout(() => {
-        this.transitionToVoting(roomId)
-      }, DISCUSSION_PHASE_DURATION)
-    )
+    this.phaseTimers.set(roomId, setTimeout(() => this.transitionToVoting(roomId), DISCUSSION_PHASE_DURATION))
   }
 
   transitionToVoting(roomId: string): void {
     const room = this.rooms.get(roomId)
     if (!room) return
-
     room.phase = 'voting'
-
-    this.phaseTimers.set(
-      roomId,
-      setTimeout(() => {
-        this.resolveVotes(roomId)
-      }, VOTING_PHASE_DURATION)
-    )
+    this.phaseTimers.set(roomId, setTimeout(() => this.resolveVotes(roomId), VOTING_PHASE_DURATION))
   }
 
   recordNightAction(roomId: string, action: GameAction): void {
@@ -169,48 +137,32 @@ export class GameManager {
   private resolveNightActions(roomId: string): void {
     const room = this.rooms.get(roomId)
     const actions = this.nightActions.get(roomId) || []
-
     if (!room) return
 
-    // Resolve protections and blocks first
     const protectedPlayers = new Set<string>()
     const blockedPlayers = new Set<string>()
 
     actions.forEach((action) => {
-      if (action.action === 'doctor-protect' && action.targetId) {
-        protectedPlayers.add(action.targetId)
-      }
-      if (action.action === 'block' && action.targetId) {
-        blockedPlayers.add(action.targetId)
-      }
+      if (action.action === 'doctor-protect' && action.targetId) protectedPlayers.add(action.targetId)
+      if (action.action === 'block' && action.targetId) blockedPlayers.add(action.targetId)
     })
 
-    // Resolve Mafia kills
     const mafiaKills = actions.filter((a) => a.action === 'mafia-kill')
     const targetToKill = mafiaKills.length > 0 ? mafiaKills[0].targetId : null
-
     let eliminatedId: string | null = null
 
     if (targetToKill && !protectedPlayers.has(targetToKill)) {
       eliminatedId = targetToKill
     } else if (targetToKill && protectedPlayers.has(targetToKill)) {
-      // Doctor saved, check for Bodyguard
       const bodyguardGuards = actions.filter((a) => a.action === 'bodyguard-guard' && a.targetId === targetToKill)
-      // If bodyguard guarded, they take the hit instead
-      if (bodyguardGuards.length > 0) {
-        eliminatedId = bodyguardGuards[0].playerId
-      }
+      if (bodyguardGuards.length > 0) eliminatedId = bodyguardGuards[0].playerId
     }
 
-    // Resolve Vigilante kill (if not blocked)
     if (!eliminatedId) {
       const vigilantKill = actions.find((a) => a.action === 'vigilante-kill' && !blockedPlayers.has(a.playerId) && a.targetId)
-      if (vigilantKill && vigilantKill.targetId) {
-        eliminatedId = vigilantKill.targetId
-      }
+      if (vigilantKill && vigilantKill.targetId) eliminatedId = vigilantKill.targetId
     }
 
-    // Apply elimination
     if (eliminatedId) {
       const player = room.players.find((p) => p.id === eliminatedId)
       if (player) {
@@ -219,18 +171,11 @@ export class GameManager {
         if (gameState) {
           gameState.deadPlayers.push(eliminatedId)
           gameState.alivePlayers = gameState.alivePlayers.filter((id) => id !== eliminatedId)
-          gameState.lastEliminated = {
-            eliminatedPlayerId: eliminatedId,
-            role: player.role!,
-            cause: 'mafia-kill',
-            day: room.currentDay,
-            night: true,
-          }
+          gameState.lastEliminated = { eliminatedPlayerId: eliminatedId, role: player.role!, cause: 'mafia-kill', day: room.currentDay, night: true }
         }
       }
     }
 
-    // Check win conditions
     const winner = this.checkWinCondition(roomId)
     if (winner) {
       room.phase = 'ended'
@@ -245,10 +190,8 @@ export class GameManager {
   private resolveVotes(roomId: string): void {
     const room = this.rooms.get(roomId)
     const votes = this.voteActions.get(roomId) || {}
-
     if (!room) return
 
-    // Count votes, considering Mayor's 2x vote
     const voteCount: { [targetId: string]: number } = {}
     let maxVotes = 0
     let topTarget: string | null = null
@@ -256,88 +199,47 @@ export class GameManager {
     Object.entries(votes).forEach(([voterId, targetId]) => {
       const voter = room.players.find((p) => p.id === voterId)
       const voteWeight = voter?.role === 'Mayor' ? 2 : 1
-
       voteCount[targetId] = (voteCount[targetId] || 0) + voteWeight
-
-      if (voteCount[targetId] > maxVotes) {
-        maxVotes = voteCount[targetId]
-        topTarget = targetId
-      }
+      if (voteCount[targetId] > maxVotes) { maxVotes = voteCount[targetId]; topTarget = targetId }
     })
 
-    // Check for tie
     const topVoteCount = Object.values(voteCount).reduce((a, b) => Math.max(a, b), 0)
-    const topTargets = Object.entries(voteCount)
-      .filter(([, count]) => count === topVoteCount)
-      .map(([id]) => id)
-
+    const topTargets = Object.entries(voteCount).filter(([, count]) => count === topVoteCount).map(([id]) => id)
     const gameState = this.gameStates.get(roomId)
 
-    if (topTargets.length > 1) {
-      // Tie - no elimination
-      if (gameState) {
-        gameState.lastEliminated = undefined
-      }
-    } else if (topTarget) {
+    if (topTargets.length <= 1 && topTarget) {
       const player = room.players.find((p) => p.id === topTarget)
       if (player) {
-        // Check for Jester
         if (player.role === 'Jester') {
           room.phase = 'ended'
           if (gameState) gameState.winningTeam = 'jester'
           return
         }
-
         player.isAlive = false
         if (gameState) {
           gameState.deadPlayers.push(topTarget)
           gameState.alivePlayers = gameState.alivePlayers.filter((id) => id !== topTarget)
-          gameState.lastEliminated = {
-            eliminatedPlayerId: topTarget,
-            role: player.role!,
-            cause: 'vote',
-            day: room.currentDay,
-            night: false,
-          }
+          gameState.lastEliminated = { eliminatedPlayerId: topTarget, role: player.role!, cause: 'vote', day: room.currentDay, night: false }
         }
       }
     }
 
     room.phase = 'results'
-
-    // Set timer to transition to next phase
-    this.phaseTimers.set(
-      roomId,
-      setTimeout(() => {
-        const winner = this.checkWinCondition(roomId)
-        if (winner) {
-          room.phase = 'ended'
-          if (gameState) gameState.winningTeam = winner
-        } else {
-          this.transitionToNight(roomId)
-        }
-      }, 5000)
-    )
+    this.phaseTimers.set(roomId, setTimeout(() => {
+      const winner = this.checkWinCondition(roomId)
+      if (winner) { room.phase = 'ended'; if (gameState) gameState.winningTeam = winner }
+      else this.transitionToNight(roomId)
+    }, 5000))
   }
 
   private checkWinCondition(roomId: string): 'mafia' | 'town' | 'jester' | null {
     const room = this.rooms.get(roomId)
     if (!room) return null
-
     const alivePlayers = room.players.filter((p) => p.isAlive)
     const aliveMafia = alivePlayers.filter((p) => isMafia(p.role!))
     const aliveVillagers = alivePlayers.filter((p) => !isMafia(p.role!))
-
-    // Mafia wins if they equal or outnumber Town
-    if (aliveMafia.length >= aliveVillagers.length) {
-      return 'mafia'
-    }
-
-    // Town wins if all Mafia are eliminated
-    if (aliveMafia.length === 0) {
-      return 'town'
-    }
-
+    if (aliveMafia.length >= aliveVillagers.length) return 'mafia'
+    if (aliveMafia.length === 0) return 'town'
     return null
   }
 
@@ -348,13 +250,9 @@ export class GameManager {
   removePlayerFromRoom(roomId: string, playerId: string): void {
     const room = this.rooms.get(roomId)
     if (!room) return
-
     const playerIndex = room.players.findIndex((p) => p.id === playerId)
     if (playerIndex === -1) return
-
     const player = room.players[playerIndex]
-
-    // If in-game, mark as eliminated
     if (room.phase !== 'lobby') {
       player.isAlive = false
       const gameState = this.gameStates.get(roomId)
@@ -363,10 +261,7 @@ export class GameManager {
         gameState.alivePlayers = gameState.alivePlayers.filter((id) => id !== playerId)
       }
     } else {
-      // If in lobby, remove completely
       room.players.splice(playerIndex, 1)
-
-      // If room is empty, delete it
       if (room.players.length === 0) {
         this.rooms.delete(roomId)
         this.gameStates.delete(roomId)
