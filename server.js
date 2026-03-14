@@ -236,6 +236,12 @@ function resolveVoting(io, roomId) {
 
 app.prepare().then(() => {
   const httpServer = createServer((req, res) => {
+    const parsedUrl = parse(req.url, true)
+  if (parsedUrl.pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }))
+    return
+  }
     handle(req, res, parse(req.url, true))
   })
 
