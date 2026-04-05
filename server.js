@@ -331,9 +331,9 @@ app.prepare().then(() => {
       callback({ success: true })
     })
 
-    socket.on('night-action', ({ targetId, actionType }, callback) => {
-      const roomId = socket.data.roomId
-      const playerId = socket.data.playerId
+    socket.on("night-action", ({ targetId, actionType, playerId: pid, roomId: rid }, callback) => {
+      const roomId = socket.data.roomId || rid
+      const playerId = socket.data.playerId || pid
       const room = rooms[roomId]
       if (!room || room.phase !== 'night') return callback({ success: false })
       room.nightActions[playerId] = { targetId, actionType }
@@ -353,8 +353,8 @@ app.prepare().then(() => {
     })
 
     socket.on('mafia-chat', ({ message }) => {
-      const roomId = socket.data.roomId
-      const playerId = socket.data.playerId
+      const roomId = socket.data.roomId || rid
+      const playerId = socket.data.playerId || pid
       const room = rooms[roomId]
       if (!room || room.phase !== 'night') return
       const player = room.players.find(p => p.id === playerId)
@@ -367,8 +367,8 @@ app.prepare().then(() => {
     })
 
     socket.on('lobby-chat', ({ message }) => {
-      const roomId = socket.data.roomId
-      const playerId = socket.data.playerId
+      const roomId = socket.data.roomId || rid
+      const playerId = socket.data.playerId || pid
       const room = rooms[roomId]
       if (!room || room.phase !== 'lobby') return
       const player = room.players.find(p => p.id === playerId)
@@ -379,9 +379,9 @@ app.prepare().then(() => {
       io.to(roomId).emit('lobby-chat-message', msg)
     })
 
-    socket.on('chat-message', ({ message }) => {
-      const roomId = socket.data.roomId
-      const playerId = socket.data.playerId
+    socket.on("chat-message", ({ message, playerId: pid, roomId: rid }) => {
+      const roomId = socket.data.roomId || rid
+      const playerId = socket.data.playerId || pid
       const room = rooms[roomId]
       if (!room) return
       const player = room.players.find(p => p.id === playerId)
@@ -390,8 +390,8 @@ app.prepare().then(() => {
     })
 
     socket.on('vote', ({ targetId }, callback) => {
-      const roomId = socket.data.roomId
-      const playerId = socket.data.playerId
+      const roomId = socket.data.roomId || rid
+      const playerId = socket.data.playerId || pid
       const room = rooms[roomId]
       if (!room || room.phase !== 'voting') return callback({ success: false })
       const voter = room.players.find(p => p.id === playerId)
@@ -404,8 +404,8 @@ app.prepare().then(() => {
     })
 
     socket.on('disconnect', () => {
-      const roomId = socket.data.roomId
-      const playerId = socket.data.playerId
+      const roomId = socket.data.roomId || rid
+      const playerId = socket.data.playerId || pid
       if (!roomId || !rooms[roomId]) return
       const room = rooms[roomId]
       const player = room.players.find(p => p.id === playerId)
