@@ -13,11 +13,13 @@ const phaseTimers = {}
 const reconnectTimers = {}
 
 const BRIEFING_DURATION = 10000
-const NIGHT_DURATION    = 90000   // 1.5 min
-const DAY_DURATION      = 180000
-const VOTING_DURATION   = 60000
-const RESULTS_DURATION  = 5000
-const RECONNECT_GRACE   = 120000  // 2 min
+const NIGHT_DURATION = 90000
+const DAY_DURATION = 90000
+const VOTING_DURATION = 60000
+const RESULTS_DURATION = 5000
+const RECONNECT_GRACE = 120000
+
+const ALL_SPECIAL_ROLES = ['Godfather', 'Detective', 'Doctor', 'Bodyguard', 'Vigilante', 'RoleBlocker', 'Jester', 'Mayor']
 
 const AVAILABLE_COLORS = [
   '#e74c3c','#e67e22','#f1c40f','#2ecc71','#1abc9c',
@@ -29,32 +31,44 @@ function generateRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase()
 }
 
-function assignRoles(players) {
-  const count = players.length
-  const roles = []
-  if (count <= 10) {
-    roles.push('Mafia', 'Mafia', 'Detective', 'Doctor')
-    while (roles.length < count) roles.push('Villager')
-  } else {
-    roles.push('Godfather','Mafia','Mafia','Mafia','Mafia')
-    roles.push('Detective','Doctor','Bodyguard','Vigilante','RoleBlocker','Jester','Mayor')
-    while (roles.length < count) roles.push('Villager')
-  }
-  for (let i = roles.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [roles[i], roles[j]] = [roles[j], roles[i]]
-  }
-  return players.map((player, i) => ({ ...player, role: roles[i] }))
-}
-
 function isMafia(role) {
   return role === 'Mafia' || role === 'Godfather'
+}
+
+function buildRolePool(playerCount, settings) {
+  const pool = []
+  const mafiaCount = Math.max(1, Math.min(settings.mafiaCount || 2, playerCount - 1))
+
+  if (settings.enabledRoles.includes('Godfather') && mafiaCount > 0) {
+    pool.push('Godfather')
+    for (let i = 1; i < mafiaCount; i++) pool.push('Mafia')
+  } else {
+    for (let i = 0; i < mafiaCount; i++) pool.push('Mafia')
+  }
+
+  for (const role of ALL_SPECIAL_ROLES) {
+    if (role !== 'Godfather' && settings.enabledRoles.includes(role)) {
+      pool.push(role)
+    }
+  }
+
+  while (pool.length < playerCount) pool.push('Villager')
+  return pool.slice(0, playerCount)
+}
+
+function assignRoles(players, settings) {
+  const roles = buildRolePool(players.length, settings)
+  for (let i = roles.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[roles[i], roles[j]] = [roles[j], roles[i]]
+  }
+  return players.map((player, i) => ({ ...player, role: roles[i], isReady: false }))
 }
 
 function checkWinCondition(room) {
   const alive = room.players.filter(p => p.isAlive)
   const mafia = alive.filter(p => isMafia(p.role))
-  const town  = alive.filter(p => !isMafia(p.role))
+  const town = alive.filter(p => !isMafia(p.role))
   if (mafia.length === 0) return 'town'
   if (mafia.length >= town.length) return 'mafia'
   return null
@@ -93,12 +107,46 @@ function sanitizeRoom(room) {
   return { ...room, players: room.players.map(p => ({ ...p, socketId: undefined })) }
 }
 
+function emitMafiaTeam(io, roomId) {
+  const room = rooms[roomId]
+  if (!room) return
+  const mafiaPlayers = room.players.filter(p => isMafia(p.role))
+  mafiaPlayers.forEach(mp => {
+    const s = getPlayerSocket(io, mp.socketId)
+    if (s) {
+      s.emit('mafia-team', {
+        teammates: mafiaPlayers.filter(p => p.id !== mp.id).map(p => ({ id: p.id, name: p.name, role: p.role, color: p.color, isAlive: p.isAlive }))
+      })
+    }
+  })
+}
+
+function maybeStartFromReady(io, roomId) {
+  const room = rooms[roomId]
+  if (!room || room.phase !== 'lobby') return
+  const activePlayers = room.players.filter(p => !p.disconnected)
+  if (activePlayers.length < room.minPlayers) return
+  if (!activePlayers.every(p => p.isReady)) return
+
+  room.players = assignRoles(room.players, room.settings)
+  room.phase = 'briefing'
+  io.to(roomId).emit('game-started', { room: sanitizeRoom(room) })
+  room.players.forEach(player => {
+    const s = getPlayerSocket(io, player.socketId)
+    if (s) s.emit('role-briefing', { role: player.role })
+  })
+  emitMafiaTeam(io, roomId)
+  setPhaseTimer(roomId, () => startNightPhase(io, roomId), BRIEFING_DURATION)
+}
+
 function startNightPhase(io, roomId) {
   const room = rooms[roomId]
   if (!room) return
   room.phase = 'night'
+  room.currentNight += 1
   room.nightActions = {}
   io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
+  emitMafiaTeam(io, roomId)
   setPhaseTimer(roomId, () => resolveNight(io, roomId), NIGHT_DURATION)
 }
 
@@ -109,6 +157,7 @@ function startDayPhase(io, roomId) {
   room.currentDay += 1
   room.votes = {}
   io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
+  emitMafiaTeam(io, roomId)
   setPhaseTimer(roomId, () => startVotingPhase(io, roomId), DAY_DURATION)
 }
 
@@ -118,6 +167,7 @@ function startVotingPhase(io, roomId) {
   room.phase = 'voting'
   room.votes = {}
   io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
+  emitMafiaTeam(io, roomId)
   setPhaseTimer(roomId, () => resolveVoting(io, roomId), VOTING_DURATION)
 }
 
@@ -127,6 +177,7 @@ function resolveNight(io, roomId) {
   const actions = room.nightActions
   let killed = null
   let protectedTarget = null
+  let doctorTarget = null
   const blocked = new Set()
 
   Object.entries(actions).forEach(([playerId, action]) => {
@@ -141,6 +192,12 @@ function resolveNight(io, roomId) {
   Object.entries(actions).forEach(([playerId, action]) => {
     if (action.actionType === 'doctor-protect' && action.targetId && !blocked.has(playerId)) {
       protectedTarget = action.targetId
+      doctorTarget = action.targetId
+      if (action.targetId === playerId) {
+        room.doctorSelfHealBlockedUntilNight[playerId] = room.currentNight + 1
+      } else {
+        delete room.doctorSelfHealBlockedUntilNight[playerId]
+      }
     }
   })
 
@@ -194,6 +251,7 @@ function resolveNight(io, roomId) {
   if (winner) {
     room.phase = 'ended'; room.winner = winner
     io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
+    emitMafiaTeam(io, roomId)
     return
   }
   startDayPhase(io, roomId)
@@ -217,6 +275,7 @@ function resolveVoting(io, roomId) {
         room.phase = 'ended'; room.winner = 'jester'
         io.to(roomId).emit('vote-result', { eliminated: target, tie: false, jesterWin: true })
         io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
+        emitMafiaTeam(io, roomId)
         return
       }
       target.isAlive = false; target.isSpectating = true
@@ -229,6 +288,7 @@ function resolveVoting(io, roomId) {
   const winner = checkWinCondition(room)
   if (winner) { room.phase = 'ended'; room.winner = winner }
   io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
+  emitMafiaTeam(io, roomId)
   if (room.phase === 'results') {
     setPhaseTimer(roomId, () => startNightPhase(io, roomId), RESULTS_DURATION)
   }
@@ -237,19 +297,17 @@ function resolveVoting(io, roomId) {
 app.prepare().then(() => {
   const httpServer = createServer((req, res) => {
     const parsedUrl = parse(req.url, true)
-  if (parsedUrl.pathname === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }))
-    return
-  }
+    if (parsedUrl.pathname === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }))
+      return
+    }
     handle(req, res, parse(req.url, true))
   })
 
   const io = new Server(httpServer, { cors: { origin: '*' } })
 
   io.on('connection', (socket) => {
-    console.log('Client connected:', socket.id)
-
     socket.on('get-available-colors', ({ roomId }, callback) => {
       const room = rooms[roomId]
       const used = room ? getUsedColors(room) : []
@@ -261,8 +319,11 @@ app.prepare().then(() => {
       const playerId = uuidv4()
       const room = {
         id: roomId,
-        players: [{ id: playerId, socketId: socket.id, name: playerName, role: null, isAlive: true, isHost: true, color: color || AVAILABLE_COLORS[0], isSpectating: false }],
-        phase: 'lobby', currentDay: 1, nightActions: {}, votes: {}, maxPlayers: 20, minPlayers: 4, lobbyMessages: [],
+        players: [{ id: playerId, socketId: socket.id, name: playerName, role: null, isAlive: true, isHost: true, color: color || AVAILABLE_COLORS[0], isSpectating: false, isReady: false }],
+        phase: 'lobby', currentDay: 1, currentNight: 0, nightActions: {}, votes: {}, maxPlayers: 20, minPlayers: 4, lobbyMessages: [],
+        winner: null,
+        doctorSelfHealBlockedUntilNight: {},
+        settings: { mafiaCount: 2, enabledRoles: [...ALL_SPECIAL_ROLES] },
       }
       rooms[roomId] = room
       socket.join(roomId)
@@ -282,7 +343,7 @@ app.prepare().then(() => {
       const playerId = uuidv4()
       const player = {
         id: playerId, socketId: socket.id, name: playerName, role: null, isAlive: true, isHost: false,
-        color: color || AVAILABLE_COLORS.find(c => !usedColors.includes(c)) || '#607d8b', isSpectating: false,
+        color: color || AVAILABLE_COLORS.find(c => !usedColors.includes(c)) || '#607d8b', isSpectating: false, isReady: false,
       }
       room.players.push(player)
       socket.join(roomId)
@@ -306,36 +367,78 @@ app.prepare().then(() => {
       callback({ success: true, room: sanitizeRoom(room) })
       io.to(roomId).emit('player-reconnected', { playerId, playerName: player.name })
       io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
+      emitMafiaTeam(io, roomId)
     })
 
-    socket.on('start-game', ({ roomId }, callback) => {
+    socket.on('update-room-settings', ({ roomId, settings }, callback) => {
       const room = rooms[roomId]
-      if (!room) return callback({ success: false, error: 'Room not found' })
-      if (room.players.length < room.minPlayers) return callback({ success: false, error: `Need at least ${room.minPlayers} players` })
-      room.players = assignRoles(room.players)
-      room.phase = 'briefing'
-      io.to(roomId).emit('game-started', { room: sanitizeRoom(room) })
-      room.players.forEach(player => {
-        const s = getPlayerSocket(io, player.socketId)
-        if (s) s.emit('role-briefing', { role: player.role })
-      })
-      // Send mafia their teammates
-      const mafiaPlayers = room.players.filter(p => isMafia(p.role))
-      mafiaPlayers.forEach(mp => {
-        const s = getPlayerSocket(io, mp.socketId)
-        if (s) s.emit('mafia-team', {
-          teammates: mafiaPlayers.filter(p => p.id !== mp.id).map(p => ({ id: p.id, name: p.name, role: p.role, color: p.color }))
-        })
-      })
-      setPhaseTimer(roomId, () => startNightPhase(io, roomId), BRIEFING_DURATION)
+      if (!room || room.phase !== 'lobby') return callback({ success: false, error: 'Room is not in lobby' })
+      const playerId = socket.data.playerId
+      const player = room.players.find(p => p.id === playerId)
+      if (!player || !player.isHost) return callback({ success: false, error: 'Only host can edit settings' })
+
+      const mafiaCount = Number(settings?.mafiaCount || room.settings.mafiaCount)
+      const enabledRoles = Array.isArray(settings?.enabledRoles)
+        ? settings.enabledRoles.filter(r => ALL_SPECIAL_ROLES.includes(r))
+        : room.settings.enabledRoles
+
+      room.settings = {
+        mafiaCount: Math.max(1, Math.min(mafiaCount, room.maxPlayers - 1)),
+        enabledRoles: enabledRoles.length > 0 ? enabledRoles : ['Doctor', 'Detective'],
+      }
+      room.players.forEach(p => { p.isReady = false })
+      io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
       callback({ success: true })
     })
 
-    socket.on("night-action", ({ targetId, actionType, playerId: pid, roomId: rid }, callback) => {
+    socket.on('toggle-ready', ({ roomId }, callback) => {
+      const room = rooms[roomId]
+      if (!room || room.phase !== 'lobby') return callback({ success: false, error: 'Room is not in lobby' })
+      const playerId = socket.data.playerId
+      const player = room.players.find(p => p.id === playerId)
+      if (!player) return callback({ success: false, error: 'Player not found' })
+      player.isReady = !player.isReady
+      io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
+      maybeStartFromReady(io, roomId)
+      callback({ success: true, isReady: player.isReady })
+    })
+
+    socket.on('play-again', ({ roomId }, callback) => {
+      const room = rooms[roomId]
+      if (!room || room.phase !== 'ended') return callback({ success: false, error: 'Room not ended' })
+      const playerId = socket.data.playerId
+      const player = room.players.find(p => p.id === playerId)
+      if (!player || !player.isHost) return callback({ success: false, error: 'Only host can reset room' })
+
+      clearPhaseTimer(roomId)
+      room.phase = 'lobby'
+      room.currentDay = 1
+      room.currentNight = 0
+      room.nightActions = {}
+      room.votes = {}
+      room.winner = null
+      room.doctorSelfHealBlockedUntilNight = {}
+      room.players = room.players.map(p => ({ ...p, role: null, isAlive: true, isSpectating: false, isReady: false }))
+      io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
+      callback({ success: true })
+    })
+
+    socket.on('night-action', ({ targetId, actionType, playerId: pid, roomId: rid }, callback) => {
       const roomId = socket.data.roomId || rid
       const playerId = socket.data.playerId || pid
       const room = rooms[roomId]
       if (!room || room.phase !== 'night') return callback({ success: false })
+
+      const actor = room.players.find(p => p.id === playerId)
+      if (!actor || !actor.isAlive) return callback({ success: false, error: 'Invalid actor' })
+
+      if (actionType === 'doctor-protect' && targetId === playerId) {
+        const blockedUntil = room.doctorSelfHealBlockedUntilNight[playerId] || 0
+        if (room.currentNight <= blockedUntil) {
+          return callback({ success: false, error: 'You cannot self-heal this night.' })
+        }
+      }
+
       room.nightActions[playerId] = { targetId, actionType }
       if (actionType === 'detective-investigate' && targetId) {
         const target = room.players.find(p => p.id === targetId)
@@ -352,7 +455,7 @@ app.prepare().then(() => {
       callback({ success: true })
     })
 
-    socket.on('mafia-chat', ({ message }) => {
+    socket.on('mafia-chat', ({ message, playerId: pid, roomId: rid }) => {
       const roomId = socket.data.roomId || rid
       const playerId = socket.data.playerId || pid
       const room = rooms[roomId]
@@ -366,7 +469,7 @@ app.prepare().then(() => {
       })
     })
 
-    socket.on('lobby-chat', ({ message }) => {
+    socket.on('lobby-chat', ({ message, playerId: pid, roomId: rid }) => {
       const roomId = socket.data.roomId || rid
       const playerId = socket.data.playerId || pid
       const room = rooms[roomId]
@@ -379,7 +482,7 @@ app.prepare().then(() => {
       io.to(roomId).emit('lobby-chat-message', msg)
     })
 
-    socket.on("chat-message", ({ message, playerId: pid, roomId: rid }) => {
+    socket.on('chat-message', ({ message, playerId: pid, roomId: rid }) => {
       const roomId = socket.data.roomId || rid
       const playerId = socket.data.playerId || pid
       const room = rooms[roomId]
@@ -389,7 +492,7 @@ app.prepare().then(() => {
       io.to(roomId).emit('chat-message', { playerId, playerName: player.name, playerColor: player.color, message, timestamp: Date.now() })
     })
 
-    socket.on('vote', ({ targetId }, callback) => {
+    socket.on('vote', ({ targetId, playerId: pid, roomId: rid }, callback) => {
       const roomId = socket.data.roomId || rid
       const playerId = socket.data.playerId || pid
       const room = rooms[roomId]
@@ -404,8 +507,8 @@ app.prepare().then(() => {
     })
 
     socket.on('disconnect', () => {
-      const roomId = socket.data.roomId || rid
-      const playerId = socket.data.playerId || pid
+      const roomId = socket.data.roomId
+      const playerId = socket.data.playerId
       if (!roomId || !rooms[roomId]) return
       const room = rooms[roomId]
       const player = room.players.find(p => p.id === playerId)
@@ -424,13 +527,17 @@ app.prepare().then(() => {
         delete reconnectTimers[playerId]
         if (p.isHost && r.players.length > 0) r.players[0].isHost = true
         if (r.players.length === 0) { clearPhaseTimer(roomId); delete rooms[roomId] }
-        else { io.to(roomId).emit('player-kicked', { playerId, playerName: player.name }); io.to(roomId).emit('room-updated', { room: sanitizeRoom(r) }) }
+        else {
+          io.to(roomId).emit('player-kicked', { playerId, playerName: player.name })
+          io.to(roomId).emit('room-updated', { room: sanitizeRoom(r) })
+        }
       }, RECONNECT_GRACE)
 
       if (room.players.every(p => p.disconnected)) {
         setTimeout(() => {
           if (rooms[roomId] && rooms[roomId].players.every(p => p.disconnected)) {
-            clearPhaseTimer(roomId); delete rooms[roomId]
+            clearPhaseTimer(roomId)
+            delete rooms[roomId]
           }
         }, 30000)
       }

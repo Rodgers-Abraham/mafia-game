@@ -35,12 +35,7 @@ export default function Lobby({ room, socket, currentPlayerId }: LobbyProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleStartGame = () => {
-    if (!socket) return
-    socket.emit('start-game', { roomId: room.id }, (response: any) => {
-      if (!response.success) alert(response.error || 'Failed to start game')
-    })
-  }
+  const [settings, setSettings] = useState(room.settings || { mafiaCount: 2, enabledRoles: ['Godfather', 'Detective', 'Doctor'] })
 
   const copyRoomCode = () => {
     navigator.clipboard.writeText(room.id)
@@ -56,7 +51,36 @@ export default function Lobby({ room, socket, currentPlayerId }: LobbyProps) {
   }
 
   const isHost = mounted ? localStorage.getItem('isHost') === 'true' : false
-  const canStart = room.players.length >= MIN_PLAYERS
+  const me = room.players.find(p => p.id === currentPlayerId)
+  const canReady = room.players.length >= MIN_PLAYERS
+  const readyCount = room.players.filter(p => p.isReady).length
+
+  useEffect(() => {
+    setSettings(room.settings || { mafiaCount: 2, enabledRoles: ['Godfather', 'Detective', 'Doctor'] })
+  }, [room.settings])
+
+  const toggleReady = () => {
+    if (!socket) return
+    socket.emit('toggle-ready', { roomId: room.id }, (response: any) => {
+      if (!response.success) alert(response.error || 'Failed to update ready state')
+    })
+  }
+
+  const updateSettings = () => {
+    if (!socket) return
+    socket.emit('update-room-settings', { roomId: room.id, settings }, (response: any) => {
+      if (!response.success) alert(response.error || 'Failed to update settings')
+    })
+  }
+
+  const toggleRole = (role: string) => {
+    setSettings(prev => ({
+      ...prev,
+      enabledRoles: prev.enabledRoles.includes(role)
+        ? prev.enabledRoles.filter(r => r !== role)
+        : [...prev.enabledRoles, role],
+    }))
+  }
 
   return (
     <div className="min-h-screen p-6 md:p-8">
@@ -73,7 +97,7 @@ export default function Lobby({ room, socket, currentPlayerId }: LobbyProps) {
         </div>
 
         <div className="flex justify-center mb-8">
-          <div className="bg-black bg-opacity-60 border-2 border-red-900 rounded-xl p-5 text-center glow-red">
+          <div className="bg-black bg-opacity-60 border-2 border-red-900 rounded-xl p-5 text-center glow-red panel-3d">
             <p className="text-gray-500 text-xs tracking-widest spooky-title mb-2">ROOM CODE</p>
             <div className="flex items-center gap-4">
               <span className="text-4xl font-mono tracking-widest text-red-400 spooky-title" style={{ textShadow: '0 0 20px rgba(220,20,60,0.8)' }}>
@@ -112,6 +136,7 @@ export default function Lobby({ room, socket, currentPlayerId }: LobbyProps) {
                   </div>
                   <div className="font-semibold text-white text-sm truncate">{player.name}</div>
                   {player.isHost && <div className="text-xs mt-1 spooky-title" style={{ color: '#FFD700' }}>👑 HOST</div>}
+                  {player.isReady && <div className="text-xs mt-1 text-green-400 spooky-title">READY</div>}
                   {player.id === currentPlayerId && <div className="text-xs mt-1 text-gray-600 spooky-title">YOU</div>}
                   {player.disconnected && <div className="text-xs mt-1 text-yellow-600 spooky-title animate-pulse">RECONNECTING...</div>}
                 </div>
@@ -166,28 +191,53 @@ export default function Lobby({ room, socket, currentPlayerId }: LobbyProps) {
 
         </div>
 
-        {isHost ? (
-          <div className="text-center">
-            <button
-              onClick={handleStartGame}
-              disabled={!canStart}
-              className={`px-12 py-5 rounded-xl font-bold text-2xl spooky-title tracking-wider transition-all duration-300 ${canStart ? 'bg-red-900 hover:bg-red-800 border-2 border-red-500 glow-red hover:scale-105' : 'bg-gray-900 border-2 border-gray-700 cursor-not-allowed opacity-50'}`}
-            >
-              {canStart ? '🔫 START GAME' : `⏳ NEED ${MIN_PLAYERS - room.players.length} MORE`}
-            </button>
-            <p className="text-gray-600 text-sm mt-4 tracking-widest spooky-title">
-              {canStart ? `✅ ${room.players.length} PLAYERS READY` : `MINIMUM ${MIN_PLAYERS} PLAYERS REQUIRED`}
-            </p>
-          </div>
-        ) : (
-          <div className="text-center">
-            <div className="inline-flex items-center gap-3 px-8 py-4 bg-black bg-opacity-50 border border-gray-800 rounded-xl">
-              <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse" />
-              <p className="text-gray-400 spooky-title tracking-widest">WAITING FOR HOST TO START...</p>
-              <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse" style={{ animationDelay: '0.5s' }} />
+        {isHost && (
+          <div className="mb-6 rounded-xl border p-4" style={{ borderColor: '#8B000044', backgroundColor: 'rgba(0,0,0,0.45)' }}>
+            <p className="text-sm spooky-title tracking-widest mb-3 text-gray-400">ROOM SETTINGS</p>
+            <div className="flex flex-col md:flex-row md:items-end gap-4">
+              <label className="text-xs text-gray-500 spooky-title tracking-widest">
+                MAFIA COUNT
+                <input
+                  type="number"
+                  min={1}
+                  max={Math.max(1, room.players.length - 1)}
+                  value={settings.mafiaCount}
+                  onChange={e => setSettings(prev => ({ ...prev, mafiaCount: Number(e.target.value) }))}
+                  className="mt-1 block w-24 px-2 py-1 rounded bg-black border border-red-900 text-white"
+                />
+              </label>
+              <div className="flex-1">
+                <p className="text-xs text-gray-500 spooky-title tracking-widest mb-2">SPECIAL ROLES</p>
+                <div className="flex flex-wrap gap-2">
+                  {['Godfather', 'Detective', 'Doctor', 'Bodyguard', 'Vigilante', 'RoleBlocker', 'Jester', 'Mayor'].map(role => (
+                    <button key={role} onClick={() => toggleRole(role)} className="px-2 py-1 text-xs rounded border spooky-title tracking-wider" style={{ borderColor: settings.enabledRoles.includes(role) ? '#00A86B66' : '#444', color: settings.enabledRoles.includes(role) ? '#00A86B' : '#777' }}>
+                      {role}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button onClick={updateSettings} className="px-4 py-2 rounded-lg text-xs spooky-title tracking-wider border border-red-800 hover:bg-red-950">
+                APPLY
+              </button>
             </div>
           </div>
         )}
+
+        <div className="text-center">
+          <button
+            onClick={toggleReady}
+            disabled={!canReady}
+            className={`px-10 py-4 rounded-xl font-bold text-xl spooky-title tracking-wider transition-all duration-300 ${canReady ? 'bg-red-900 hover:bg-red-800 border-2 border-red-500 glow-red hover:scale-105' : 'bg-gray-900 border-2 border-gray-700 cursor-not-allowed opacity-50'}`}
+          >
+            {me?.isReady ? '✅ UNREADY' : '✅ READY'}
+          </button>
+          <p className="text-gray-600 text-sm mt-3 tracking-widest spooky-title">
+            {canReady ? `${readyCount}/${room.players.length} READY` : `MINIMUM ${MIN_PLAYERS} PLAYERS REQUIRED`}
+          </p>
+          <p className="text-gray-700 text-xs mt-2 tracking-widest spooky-title">
+            GAME STARTS AUTOMATICALLY WHEN ALL PLAYERS ARE READY
+          </p>
+        </div>
 
       </div>
     </div>

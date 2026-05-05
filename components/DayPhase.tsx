@@ -23,7 +23,7 @@ const avatars = ['🕵️', '🧛', '👻', '💀', '🎭', '🦹', '🧟', '�
 export default function DayPhase({ room, socket }: DayPhaseProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputValue, setInputValue] = useState('')
-  const [timeLeft, setTimeLeft] = useState(180)
+  const [timeLeft, setTimeLeft] = useState(90)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -148,7 +148,7 @@ export default function DayPhase({ room, socket }: DayPhaseProps) {
               </div>
               <p className="text-gray-600 text-xs spooky-title tracking-widest">{isUrgent ? 'VOTING IMMINENT' : 'UNTIL VOTING'}</p>
               <div className="mt-3 h-1 bg-gray-900 rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${(timeLeft / 180) * 100}%`, backgroundColor: isUrgent ? '#DC143C' : '#c8a04a' }} />
+                <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${(timeLeft / 90) * 100}%`, backgroundColor: isUrgent ? '#DC143C' : '#c8a04a' }} />
               </div>
             </div>
 

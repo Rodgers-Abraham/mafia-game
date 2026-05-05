@@ -23,6 +23,7 @@ export interface Player {
   isSpectating?: boolean
   disconnected?: boolean
   disconnectedAt?: number
+  isReady?: boolean
 }
 
 export interface LobbyMessage {
@@ -40,12 +41,17 @@ export interface Room {
   maxPlayers: number
   minPlayers: number
   currentDay: number
+  currentNight?: number
   conversationTimer: number
   voteTimer: number
   nightActions: { [playerId: string]: { targetId: string | null; actionType: string } }
   votes: { [playerId: string]: { targetId: string; weight: number; voterName: string } }
   winner?: 'mafia' | 'town' | 'jester'
   lobbyMessages: LobbyMessage[]
+  settings?: {
+    mafiaCount: number
+    enabledRoles: string[]
+  }
 }
 
 export interface GameAction {

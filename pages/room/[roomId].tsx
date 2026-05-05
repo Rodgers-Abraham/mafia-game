@@ -31,16 +31,16 @@ function NotificationToast({ notifications, onDismiss }: { notifications: Notifi
     'reconnect':     { border: '#FFD700', bg: 'rgba(255,215,0,0.1)',    icon: '🔄' },
   }
   return (
-    <div className="fixed top-4 right-4 z-50 flex flex-col gap-3 max-w-sm">
+    <div className="fixed top-2 right-2 md:top-4 md:right-4 z-50 flex flex-col gap-2 max-w-[85vw] md:max-w-sm">
       {notifications.map(n => {
         const style = typeStyles[n.type] || typeStyles['default']
         return (
-          <div key={n.id} className="animate-slideUp rounded-xl border p-4 shadow-2xl cursor-pointer" style={{ borderColor: style.border, backgroundColor: style.bg, backdropFilter: 'blur(10px)', boxShadow: `0 0 20px ${style.border}44` }} onClick={() => onDismiss(n.id)}>
+          <div key={n.id} className="animate-slideUp rounded-xl border p-3 md:p-4 shadow-2xl cursor-pointer" style={{ borderColor: style.border, backgroundColor: style.bg, backdropFilter: 'blur(10px)', boxShadow: `0 0 20px ${style.border}44` }} onClick={() => onDismiss(n.id)}>
             <div className="flex items-start gap-3">
-              <span className="text-xl flex-shrink-0">{style.icon}</span>
+              <span className="text-base md:text-xl flex-shrink-0">{style.icon}</span>
               <div className="flex-1">
                 <p className="text-xs spooky-title tracking-widest mb-1" style={{ color: style.border }}>PRIVATE MESSAGE</p>
-                <p className="text-sm text-gray-200 leading-relaxed">{n.message}</p>
+                <p className="text-xs md:text-sm text-gray-200 leading-relaxed">{n.message}</p>
                 <p className="text-xs text-gray-600 mt-2">Click to dismiss</p>
               </div>
             </div>
@@ -56,7 +56,7 @@ function VoteTallyBar({ tally, room }: { tally: VoteTally | null; room: Room }) 
   const sorted = Object.entries(tally.voteCounts).sort((a, b) => b[1] - a[1])
   const maxVotes = sorted[0]?.[1] || 1
   return (
-    <div className="fixed bottom-4 right-4 z-40 rounded-xl border p-4 w-64" style={{ borderColor: '#8B000044', backgroundColor: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)' }}>
+    <div className="fixed bottom-2 right-2 md:bottom-4 md:right-4 z-40 rounded-xl border p-3 md:p-4 w-52 md:w-64" style={{ borderColor: '#8B000044', backgroundColor: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)' }}>
       <div className="flex justify-between items-center mb-3">
         <p className="spooky-title tracking-widest text-xs text-gray-500">LIVE VOTES</p>
         <p className="text-xs text-gray-600">{tally.totalVoted}/{tally.totalAlive}</p>
@@ -76,6 +76,23 @@ function VoteTallyBar({ tally, room }: { tally: VoteTally | null; room: Room }) 
             </div>
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+function MafiaTeamOverlay({ teammates, active }: { teammates: MafiaTeammate[]; active: boolean }) {
+  if (!active || teammates.length === 0) return null
+  return (
+    <div className="fixed left-2 bottom-2 md:left-4 md:bottom-4 z-40 rounded-xl border p-3 w-44 md:w-56" style={{ borderColor: '#8B000044', backgroundColor: 'rgba(0,0,0,0.85)' }}>
+      <p className="text-[10px] md:text-xs text-red-800 spooky-title tracking-widest mb-2">MAFIA TEAM</p>
+      <div className="space-y-1.5">
+        {teammates.map(t => (
+          <div key={t.id} className="flex items-center gap-2">
+            <div className="w-4 h-4 md:w-5 md:h-5 rounded-full" style={{ backgroundColor: t.color }} />
+            <span className="text-[11px] md:text-xs text-gray-200 truncate">{t.name}</span>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -206,12 +223,14 @@ export default function RoomPage() {
   )
 
   const isSpectating = currentPlayer && !currentPlayer.isAlive && room.phase !== 'ended' && room.phase !== 'lobby'
+  const showMafiaOverlay = !!currentPlayer?.role && ['Mafia', 'Godfather'].includes(currentPlayer.role) && room.phase !== 'lobby'
 
   return (
     <div className="min-h-screen text-white">
       <NotificationToast notifications={notifications} onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))} />
       {disconnectedPlayers.length > 0 && <ReconnectBanner name={disconnectedPlayers[0].name} secondsLeft={disconnectedPlayers[0].secondsLeft} />}
       {room.phase === 'voting' && <VoteTallyBar tally={voteTally} room={room} />}
+      <MafiaTeamOverlay teammates={mafiaTeammates} active={showMafiaOverlay} />
 
       {isSpectating ? (
         <SpectatorView room={room} player={currentPlayer} socket={socketRef.current} />
@@ -223,7 +242,7 @@ export default function RoomPage() {
           {room.phase === 'day' && <DayPhase room={room} socket={socketRef.current} />}
           {room.phase === 'voting' && <VotingPhase room={room} player={currentPlayer} socket={socketRef.current} />}
           {room.phase === 'results' && <ResultsPhase room={room} />}
-          {room.phase === 'ended' && <GameEnded room={room} />}
+          {room.phase === 'ended' && <GameEnded room={room} socket={socketRef.current} />}
         </>
       )}
     </div>

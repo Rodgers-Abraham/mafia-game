@@ -4,9 +4,11 @@ import { useEffect, useState } from 'react'
 import { playSound, stopAllSounds } from '@/utils/sound'
 import React from 'react'
 import { Room, Role } from '@/types/game'
+import { io } from 'socket.io-client'
 
 interface GameEndedProps {
   room: Room
+  socket: ReturnType<typeof io> | null
 }
 
 const ROLE_EMOJIS: { [key: string]: string } = {
@@ -26,18 +28,21 @@ const WINNER_CONFIG = {
   jester: { title: 'JESTER WINS', subtitle: 'Chaos reigns supreme',          emoji: '🤡', color: '#FFD700', bg: 'rgba(255,215,0,0.1)',   border: '#FFD70066' },
 }
 
-export default function GameEnded({ room }: GameEndedProps) {
+export default function GameEnded({ room, socket }: GameEndedProps) {
   const router = useRouter()
   const [revealed, setRevealed] = useState(false)
   const [myRole, setMyRole] = useState<Role | null>(null)
+  const [isHost, setIsHost] = useState(false)
 
   const mafiaCount = room.players.filter((p) => p.role && isMafia(p.role)).length
   const villagerCount = room.players.length - mafiaCount
   const jesterWon = room.players.some((p) => p.role === 'Jester' && p.isAlive)
 
-  let winner: 'mafia' | 'town' | 'jester' = 'town'
-  if (mafiaCount >= villagerCount) winner = 'mafia'
-  else if (jesterWon) winner = 'jester'
+  let winner: 'mafia' | 'town' | 'jester' = room.winner || 'town'
+  if (!room.winner) {
+    if (mafiaCount >= villagerCount) winner = 'mafia'
+    else if (jesterWon) winner = 'jester'
+  }
 
   const config = WINNER_CONFIG[winner]
 
@@ -47,7 +52,10 @@ export default function GameEnded({ room }: GameEndedProps) {
     if (stored) {
       const localData = JSON.parse(stored)
       const me = room.players.find(p => p.id === localData.playerId)
-      if (me) setMyRole(me.role)
+      if (me) {
+        setMyRole(me.role)
+        setIsHost(!!me.isHost)
+      }
     }
     const t = setTimeout(() => setRevealed(true), 500)
     return () => clearTimeout(t)
@@ -142,10 +150,19 @@ export default function GameEnded({ room }: GameEndedProps) {
           </div>
         </div>
 
-        <div className="flex justify-center">
+        <div className="flex justify-center gap-3 flex-wrap">
+          {isHost && (
+            <button
+              onClick={() => socket?.emit('play-again', { roomId: room.id })}
+              className="px-8 py-3 rounded-xl font-bold spooky-title tracking-wider text-sm md:text-base transition-all duration-300 hover:scale-105"
+              style={{ backgroundColor: '#1f4f2f', border: '2px solid #00A86B', color: 'white' }}
+            >
+              🔁 PLAY AGAIN
+            </button>
+          )}
           <button
             onClick={() => { stopAllSounds(); router.push('/') }}
-            className="px-10 py-4 rounded-xl font-bold spooky-title tracking-wider text-lg transition-all duration-300 hover:scale-105 glow-red"
+            className="px-8 py-3 rounded-xl font-bold spooky-title tracking-wider text-sm md:text-base transition-all duration-300 hover:scale-105 glow-red"
             style={{ backgroundColor: '#8B0000', border: '2px solid #DC143C', color: 'white' }}
           >
             🏠 RETURN HOME

@@ -39,6 +39,7 @@ export default function NightPhase({ room, player, socket, mafiaTeammates }: Nig
   const [timeLeft, setTimeLeft] = useState(90)
   const [mafiaMessages, setMafiaMessages] = useState<MafiaMessage[]>([])
   const [chatInput, setChatInput] = useState('')
+  const [actionError, setActionError] = useState('')
   const chatEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -77,7 +78,8 @@ export default function NightPhase({ room, player, socket, mafiaTeammates }: Nig
 
   const role = player.role
   const config = ROLE_CONFIG[role] || ROLE_CONFIG['Villager']
-  const alivePlayers = room.players.filter(p => p.isAlive && p.id !== player.id)
+  const canTargetSelf = role === 'Doctor'
+  const alivePlayers = room.players.filter(p => p.isAlive && (canTargetSelf || p.id !== player.id))
   const hasNightAction = isMafia(role) || ['Detective','Doctor','Bodyguard','Vigilante','RoleBlocker'].includes(role)
   const isMafiaPlayer = isMafia(role)
 
@@ -89,6 +91,7 @@ export default function NightPhase({ room, player, socket, mafiaTeammates }: Nig
 
   const handleSubmitAction = () => {
     if (!socket || !hasNightAction || submitted) return
+    setActionError('')
     let actionType = ''
     if (isMafia(role)) actionType = 'mafia-kill'
     else if (role === 'Detective') actionType = 'detective-investigate'
@@ -98,8 +101,9 @@ export default function NightPhase({ room, player, socket, mafiaTeammates }: Nig
     else if (role === 'RoleBlocker') actionType = 'block'
     if (role === 'Detective') playSound('investigate', 0.8)
     else playSound('button', 0.6)
-    socket.emit('night-action', { targetId: selectedTarget, actionType }, (response: { success: boolean }) => {
+    socket.emit('night-action', { targetId: selectedTarget, actionType }, (response: { success: boolean; error?: string }) => {
       if (response.success) setSubmitted(true)
+      else setActionError(response.error || 'Action rejected')
     })
   }
 
@@ -179,6 +183,7 @@ export default function NightPhase({ room, player, socket, mafiaTeammates }: Nig
                   ACTION SUBMITTED
                 </div>
               )}
+              {actionError && <p className="text-xs text-red-400 mt-2 text-center">{actionError}</p>}
               {!hasNightAction && (
                 <div className="text-center py-4">
                   <p className="text-gray-600 text-sm spooky-title tracking-widest">AWAIT THE DAWN...</p>
