@@ -2,6 +2,7 @@ import { Room } from '@/types/game'
 import { io } from 'socket.io-client'
 import { useState, useRef, useEffect } from 'react'
 import { playSound, stopSound, stopAllSounds } from '@/utils/sound'
+import RoleSummary from '@/components/RoleSummary'
 import React from 'react'
 
 type ClientSocket = ReturnType<typeof io>
@@ -23,7 +24,7 @@ const avatars = ['🕵️', '🧛', '👻', '💀', '🎭', '🦹', '🧟', '�
 export default function DayPhase({ room, socket }: DayPhaseProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputValue, setInputValue] = useState('')
-  const [timeLeft, setTimeLeft] = useState(90)
+  const [timeLeft, setTimeLeft] = useState(room.phaseDurationSeconds || 60)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -68,12 +69,12 @@ export default function DayPhase({ room, socket }: DayPhaseProps) {
       <div className="max-w-6xl mx-auto animate-fadeIn">
 
         <div className="text-center mb-8">
-          <div className="flex justify-center gap-6 mb-4 text-3xl">
+          <div className="flex justify-center gap-4 md:gap-6 mb-4 text-2xl md:text-3xl">
             <span className="animate-float">☀️</span>
             <span className="animate-float" style={{ animationDelay: '0.5s' }}>🗣️</span>
             <span className="animate-float" style={{ animationDelay: '1s' }}>☀️</span>
           </div>
-          <h1 className="spooky-title mb-1" style={{ fontSize: '3.5rem', color: '#c8a04a', textShadow: '0 0 30px rgba(200,160,74,0.8)' }}>
+          <h1 className="spooky-title mb-1" style={{ fontSize: '2.3rem', color: '#c8a04a', textShadow: '0 0 30px rgba(200,160,74,0.8)' }}>
             DAY PHASE
           </h1>
           <p className="text-gray-500 tracking-widest text-sm spooky-title">
@@ -148,7 +149,7 @@ export default function DayPhase({ room, socket }: DayPhaseProps) {
               </div>
               <p className="text-gray-600 text-xs spooky-title tracking-widest">{isUrgent ? 'VOTING IMMINENT' : 'UNTIL VOTING'}</p>
               <div className="mt-3 h-1 bg-gray-900 rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${(timeLeft / 90) * 100}%`, backgroundColor: isUrgent ? '#DC143C' : '#c8a04a' }} />
+                <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${(timeLeft / (room.phaseDurationSeconds || 60)) * 100}%`, backgroundColor: isUrgent ? '#DC143C' : '#c8a04a' }} />
               </div>
             </div>
 
@@ -174,6 +175,7 @@ export default function DayPhase({ room, socket }: DayPhaseProps) {
                 </div>
               )}
             </div>
+            <RoleSummary room={room} />
           </div>
 
         </div>

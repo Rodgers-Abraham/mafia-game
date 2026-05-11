@@ -3,6 +3,7 @@ import { io } from 'socket.io-client'
 import { useState, useEffect, useRef } from 'react'
 import { isMafia } from '@/utils/gameLogic'
 import { playSound, stopSound, stopAllSounds } from '@/utils/sound'
+import RoleSummary from '@/components/RoleSummary'
 import React from 'react'
 
 type ClientSocket = ReturnType<typeof io>
@@ -36,7 +37,7 @@ interface MafiaMessage {
 export default function NightPhase({ room, player, socket, mafiaTeammates }: NightPhaseProps) {
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState(false)
-  const [timeLeft, setTimeLeft] = useState(90)
+  const [timeLeft, setTimeLeft] = useState(room.phaseDurationSeconds || 45)
   const [mafiaMessages, setMafiaMessages] = useState<MafiaMessage[]>([])
   const [chatInput, setChatInput] = useState('')
   const [actionError, setActionError] = useState('')
@@ -119,12 +120,12 @@ export default function NightPhase({ room, player, socket, mafiaTeammates }: Nig
       <div className="max-w-6xl mx-auto animate-fadeIn">
 
         <div className="text-center mb-8">
-          <div className="flex justify-center gap-6 mb-4 text-3xl">
+          <div className="flex justify-center gap-4 md:gap-6 mb-4 text-2xl md:text-3xl">
             <span className="candle-flicker">🕯️</span>
-            <span className="animate-float text-4xl">🌙</span>
+            <span className="animate-float text-3xl md:text-4xl">🌙</span>
             <span className="candle-flicker" style={{ animationDelay: '1.5s' }}>🕯️</span>
           </div>
-          <h1 className="spooky-title mb-1" style={{ fontSize: '3.5rem', color: '#4a6fa5', textShadow: '0 0 30px rgba(74,111,165,0.8)' }}>
+          <h1 className="spooky-title mb-1" style={{ fontSize: '2.3rem', color: '#4a6fa5', textShadow: '0 0 30px rgba(74,111,165,0.8)' }}>
             NIGHT PHASE
           </h1>
           <p className="text-gray-500 tracking-widest text-sm spooky-title">-- THE CITY SLEEPS --</p>
@@ -172,7 +173,7 @@ export default function NightPhase({ room, player, socket, mafiaTeammates }: Nig
                 <button
                   onClick={handleSubmitAction}
                   disabled={!selectedTarget}
-                  className="w-full py-3 rounded-lg font-bold spooky-title tracking-wider transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed hover:scale-105"
+                  className="w-full py-2.5 md:py-3 rounded-lg font-bold spooky-title tracking-wider transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed hover:scale-105"
                   style={selectedTarget ? { backgroundColor: config.color, boxShadow: `0 0 20px ${config.color}88`, color: 'white' } : { backgroundColor: '#1a1a1a', border: `1px solid ${config.color}44`, color: '#666' }}
                 >
                   {selectedTarget ? 'CONFIRM ACTION' : 'SELECT A TARGET'}
@@ -203,7 +204,7 @@ export default function NightPhase({ room, player, socket, mafiaTeammates }: Nig
                       key={target.id}
                       onClick={() => handleSelectTarget(target.id)}
                       disabled={submitted}
-                      className="animate-slideUp p-4 rounded-xl border-2 transition-all duration-300 text-center hover:scale-105 disabled:cursor-not-allowed"
+                      className="animate-slideUp p-3 md:p-4 rounded-xl border-2 transition-all duration-300 text-center hover:scale-105 disabled:cursor-not-allowed"
                       style={{
                         animationDelay: `${idx * 0.1}s`,
                         borderColor: selectedTarget === target.id ? config.color : '#2a0010',
@@ -212,7 +213,7 @@ export default function NightPhase({ room, player, socket, mafiaTeammates }: Nig
                       }}
                     >
                       <div
-                        className="w-10 h-10 rounded-full mx-auto mb-2 flex items-center justify-center text-sm font-bold"
+                        className="w-8 h-8 md:w-10 md:h-10 rounded-full mx-auto mb-2 flex items-center justify-center text-sm font-bold"
                         style={{ backgroundColor: target.color, boxShadow: `0 0 8px ${target.color}88` }}
                       >
                         {target.name[0].toUpperCase()}
@@ -278,6 +279,7 @@ export default function NightPhase({ room, player, socket, mafiaTeammates }: Nig
               </div>
             )}
 
+            <RoleSummary room={room} />
           </div>
         </div>
 

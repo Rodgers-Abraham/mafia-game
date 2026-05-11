@@ -16,12 +16,10 @@ const MAX_PLAYERS = 20
 
 export default function Lobby({ room, socket, currentPlayerId }: LobbyProps) {
   const [copied, setCopied] = useState(false)
-  const [mounted, setMounted] = useState(false)
   const [messages, setMessages] = useState<LobbyMessage[]>(room.lobbyMessages || [])
   const [inputValue, setInputValue] = useState('')
+  const [nameInput, setNameInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => { setMounted(true) }, [])
 
   useEffect(() => {
     if (!socket) return
@@ -50,10 +48,14 @@ export default function Lobby({ room, socket, currentPlayerId }: LobbyProps) {
     setInputValue('')
   }
 
-  const isHost = mounted ? localStorage.getItem('isHost') === 'true' : false
   const me = room.players.find(p => p.id === currentPlayerId)
+  const isHost = !!me?.isHost
   const canReady = room.players.length >= MIN_PLAYERS
   const readyCount = room.players.filter(p => p.isReady).length
+
+  useEffect(() => {
+    if (me?.name) setNameInput(me.name)
+  }, [me?.name])
 
   useEffect(() => {
     setSettings(room.settings || { mafiaCount: 2, enabledRoles: ['Godfather', 'Detective', 'Doctor'] })
@@ -82,17 +84,24 @@ export default function Lobby({ room, socket, currentPlayerId }: LobbyProps) {
     }))
   }
 
+  const changeName = () => {
+    if (!socket || !nameInput.trim() || !me) return
+    socket.emit('change-name', { roomId: room.id, name: nameInput.trim() }, (response: any) => {
+      if (!response.success) alert(response.error || 'Failed to change name')
+    })
+  }
+
   return (
     <div className="min-h-screen p-6 md:p-8">
       <div className="max-w-6xl mx-auto animate-fadeIn">
 
         <div className="text-center mb-8">
-          <div className="flex justify-center gap-6 mb-4 text-3xl">
+          <div className="flex justify-center gap-4 md:gap-6 mb-4 text-2xl md:text-3xl">
             <span className="candle-flicker">🕯️</span>
             <span className="animate-float">💀</span>
             <span className="candle-flicker" style={{ animationDelay: '1s' }}>🕯️</span>
           </div>
-          <h1 className="blood-text spooky-title mb-1" style={{ fontSize: '3.5rem' }}>MAFIA LOBBY</h1>
+          <h1 className="blood-text spooky-title mb-1" style={{ fontSize: '2.3rem' }}>MAFIA LOBBY</h1>
           <p className="text-gray-500 tracking-widest text-sm spooky-title">-- AWAITING PLAYERS --</p>
         </div>
 
@@ -100,7 +109,7 @@ export default function Lobby({ room, socket, currentPlayerId }: LobbyProps) {
           <div className="bg-black bg-opacity-60 border-2 border-red-900 rounded-xl p-5 text-center glow-red panel-3d">
             <p className="text-gray-500 text-xs tracking-widest spooky-title mb-2">ROOM CODE</p>
             <div className="flex items-center gap-4">
-              <span className="text-4xl font-mono tracking-widest text-red-400 spooky-title" style={{ textShadow: '0 0 20px rgba(220,20,60,0.8)' }}>
+              <span className="text-3xl md:text-4xl font-mono tracking-widest text-red-400 spooky-title" style={{ textShadow: '0 0 20px rgba(220,20,60,0.8)' }}>
                 {room.id}
               </span>
               <button onClick={copyRoomCode} className="px-3 py-2 bg-red-900 hover:bg-red-800 border border-red-700 rounded-lg text-sm transition-all duration-200 hover:scale-105">
@@ -224,10 +233,26 @@ export default function Lobby({ room, socket, currentPlayerId }: LobbyProps) {
         )}
 
         <div className="text-center">
+          <div className="max-w-sm mx-auto mb-4 rounded-xl border p-3" style={{ borderColor: '#3d002044', backgroundColor: 'rgba(0,0,0,0.45)' }}>
+            <p className="text-xs text-gray-500 spooky-title tracking-widest mb-2">CHANGE DISPLAY NAME</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                maxLength={20}
+                className="flex-1 px-3 py-2 rounded-lg text-white placeholder-gray-600 focus:outline-none text-sm"
+                style={{ backgroundColor: 'rgba(0,0,0,0.5)', border: '1px solid #3d002044' }}
+              />
+              <button onClick={changeName} className="px-3 py-2 rounded-lg text-xs spooky-title tracking-wider border border-red-800 hover:bg-red-950">
+                SAVE
+              </button>
+            </div>
+          </div>
           <button
             onClick={toggleReady}
             disabled={!canReady}
-            className={`px-10 py-4 rounded-xl font-bold text-xl spooky-title tracking-wider transition-all duration-300 ${canReady ? 'bg-red-900 hover:bg-red-800 border-2 border-red-500 glow-red hover:scale-105' : 'bg-gray-900 border-2 border-gray-700 cursor-not-allowed opacity-50'}`}
+            className={`px-8 md:px-10 py-3 md:py-4 rounded-xl font-bold text-lg md:text-xl spooky-title tracking-wider transition-all duration-300 ${canReady ? 'bg-red-900 hover:bg-red-800 border-2 border-red-500 glow-red hover:scale-105' : 'bg-gray-900 border-2 border-gray-700 cursor-not-allowed opacity-50'}`}
           >
             {me?.isReady ? '✅ UNREADY' : '✅ READY'}
           </button>

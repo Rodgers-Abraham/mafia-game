@@ -52,6 +52,7 @@ export interface Room {
     mafiaCount: number
     enabledRoles: string[]
   }
+  phaseDurationSeconds?: number
 }
 
 export interface GameAction {

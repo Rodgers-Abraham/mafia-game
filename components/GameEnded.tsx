@@ -32,7 +32,8 @@ export default function GameEnded({ room, socket }: GameEndedProps) {
   const router = useRouter()
   const [revealed, setRevealed] = useState(false)
   const [myRole, setMyRole] = useState<Role | null>(null)
-  const [isHost, setIsHost] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const [myPlayerId, setMyPlayerId] = useState('')
 
   const mafiaCount = room.players.filter((p) => p.role && isMafia(p.role)).length
   const villagerCount = room.players.length - mafiaCount
@@ -45,16 +46,18 @@ export default function GameEnded({ room, socket }: GameEndedProps) {
   }
 
   const config = WINNER_CONFIG[winner]
+  const meById = room.players.find(p => p.id === myPlayerId) || null
+  const isHost = !!meById?.isHost
 
   useEffect(() => {
-    // Get current player's role to determine win/lose sound
     const stored = localStorage.getItem('roomData')
     if (stored) {
       const localData = JSON.parse(stored)
+      setMyPlayerId(localData.playerId)
       const me = room.players.find(p => p.id === localData.playerId)
       if (me) {
         setMyRole(me.role)
-        setIsHost(!!me.isHost)
+        setNameInput(me.name)
       }
     }
     const t = setTimeout(() => setRevealed(true), 500)
@@ -70,6 +73,13 @@ export default function GameEnded({ room, socket }: GameEndedProps) {
       (winner === 'jester' && myRole === 'Jester')
     playSound(isWinner ? 'win' : 'lose', 0.7)
   }, [revealed, myRole])
+
+  const changeName = () => {
+    if (!socket || !nameInput.trim()) return
+    socket.emit('change-name', { roomId: room.id, name: nameInput.trim() }, (response: any) => {
+      if (!response.success) alert(response.error || 'Failed to change name')
+    })
+  }
 
   const isWinner = (role: Role | null) => {
     if (!role) return false
@@ -150,6 +160,22 @@ export default function GameEnded({ room, socket }: GameEndedProps) {
           </div>
         </div>
 
+        <div className="max-w-sm mx-auto mb-6 rounded-xl border p-3" style={{ borderColor: '#3d002044', backgroundColor: 'rgba(0,0,0,0.45)' }}>
+          <p className="text-xs text-gray-500 spooky-title tracking-widest mb-2 text-center">CHANGE DISPLAY NAME</p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value)}
+              maxLength={20}
+              className="flex-1 px-3 py-2 rounded-lg text-white placeholder-gray-600 focus:outline-none text-sm"
+              style={{ backgroundColor: 'rgba(0,0,0,0.5)', border: '1px solid #3d002044' }}
+            />
+            <button onClick={changeName} className="px-3 py-2 rounded-lg text-xs spooky-title tracking-wider border border-red-800 hover:bg-red-950">
+              SAVE
+            </button>
+          </div>
+        </div>
         <div className="flex justify-center gap-3 flex-wrap">
           {isHost && (
             <button

@@ -13,8 +13,9 @@ const phaseTimers = {}
 const reconnectTimers = {}
 
 const BRIEFING_DURATION = 10000
-const NIGHT_DURATION = 90000
-const DAY_DURATION = 90000
+const NIGHT_DURATION = 45000
+const DAY_DURATION = 60000
+const SHORT_DAY_DURATION = 30000
 const VOTING_DURATION = 60000
 const RESULTS_DURATION = 5000
 const RECONNECT_GRACE = 120000
@@ -144,6 +145,7 @@ function startNightPhase(io, roomId) {
   if (!room) return
   room.phase = 'night'
   room.currentNight += 1
+  room.phaseDurationSeconds = NIGHT_DURATION / 1000
   room.nightActions = {}
   io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
   emitMafiaTeam(io, roomId)
@@ -153,18 +155,22 @@ function startNightPhase(io, roomId) {
 function startDayPhase(io, roomId) {
   const room = rooms[roomId]
   if (!room) return
+  const alivePlayers = room.players.filter(p => p.isAlive).length
+  const dayDuration = alivePlayers < 3 ? SHORT_DAY_DURATION : DAY_DURATION
   room.phase = 'day'
   room.currentDay += 1
+  room.phaseDurationSeconds = dayDuration / 1000
   room.votes = {}
   io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
   emitMafiaTeam(io, roomId)
-  setPhaseTimer(roomId, () => startVotingPhase(io, roomId), DAY_DURATION)
+  setPhaseTimer(roomId, () => startVotingPhase(io, roomId), dayDuration)
 }
 
 function startVotingPhase(io, roomId) {
   const room = rooms[roomId]
   if (!room) return
   room.phase = 'voting'
+  room.phaseDurationSeconds = VOTING_DURATION / 1000
   room.votes = {}
   io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
   emitMafiaTeam(io, roomId)
@@ -322,6 +328,7 @@ app.prepare().then(() => {
         players: [{ id: playerId, socketId: socket.id, name: playerName, role: null, isAlive: true, isHost: true, color: color || AVAILABLE_COLORS[0], isSpectating: false, isReady: false }],
         phase: 'lobby', currentDay: 1, currentNight: 0, nightActions: {}, votes: {}, maxPlayers: 20, minPlayers: 4, lobbyMessages: [],
         winner: null,
+        phaseDurationSeconds: 0,
         doctorSelfHealBlockedUntilNight: {},
         settings: { mafiaCount: 2, enabledRoles: [...ALL_SPECIAL_ROLES] },
       }
@@ -383,7 +390,7 @@ app.prepare().then(() => {
         : room.settings.enabledRoles
 
       room.settings = {
-        mafiaCount: Math.max(1, Math.min(mafiaCount, room.maxPlayers - 1)),
+        mafiaCount: Math.max(1, Math.min(mafiaCount, room.players.length - 1)),
         enabledRoles: enabledRoles.length > 0 ? enabledRoles : ['Doctor', 'Detective'],
       }
       room.players.forEach(p => { p.isReady = false })
@@ -417,10 +424,30 @@ app.prepare().then(() => {
       room.nightActions = {}
       room.votes = {}
       room.winner = null
+      room.phaseDurationSeconds = 0
       room.doctorSelfHealBlockedUntilNight = {}
       room.players = room.players.map(p => ({ ...p, role: null, isAlive: true, isSpectating: false, isReady: false }))
       io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
       callback({ success: true })
+    })
+
+    socket.on('change-name', ({ roomId, name }, callback) => {
+      const room = rooms[roomId]
+      if (!room) return callback({ success: false, error: 'Room not found' })
+      if (!['lobby', 'ended'].includes(room.phase)) {
+        return callback({ success: false, error: 'You can only change your name before or after a game.' })
+      }
+
+      const playerId = socket.data.playerId
+      const player = room.players.find(p => p.id === playerId)
+      if (!player) return callback({ success: false, error: 'Player not found' })
+
+      const nextName = String(name || '').trim().slice(0, 20)
+      if (!nextName) return callback({ success: false, error: 'Name is required' })
+
+      player.name = nextName
+      io.to(roomId).emit('room-updated', { room: sanitizeRoom(room) })
+      callback({ success: true, name: nextName })
     })
 
     socket.on('night-action', ({ targetId, actionType, playerId: pid, roomId: rid }, callback) => {

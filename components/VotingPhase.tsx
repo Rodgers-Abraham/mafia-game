@@ -2,6 +2,7 @@ import { Room, Player } from '@/types/game'
 import { io } from 'socket.io-client'
 import { useState, useEffect } from 'react'
 import { playSound, stopAllSounds } from '@/utils/sound'
+import RoleSummary from '@/components/RoleSummary'
 import React from 'react'
 
 type ClientSocket = ReturnType<typeof io>
@@ -17,7 +18,7 @@ const avatars = ['🕵️', '🧛', '👻', '💀', '🎭', '🦹', '🧟', '�
 export default function VotingPhase({ room, player, socket }: VotingPhaseProps) {
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
-  const [timeLeft, setTimeLeft] = useState(60)
+  const [timeLeft, setTimeLeft] = useState(room.phaseDurationSeconds || 60)
 
   useEffect(() => {
     stopAllSounds()
@@ -53,12 +54,12 @@ export default function VotingPhase({ room, player, socket }: VotingPhaseProps) 
       <div className="max-w-5xl mx-auto animate-fadeIn">
 
         <div className="text-center mb-10">
-          <div className="flex justify-center gap-6 mb-4 text-3xl">
+          <div className="flex justify-center gap-4 md:gap-6 mb-4 text-2xl md:text-3xl">
             <span className="animate-float">⚖️</span>
             <span className="animate-float" style={{ animationDelay: '0.5s' }}>🗳️</span>
             <span className="animate-float" style={{ animationDelay: '1s' }}>⚖️</span>
           </div>
-          <h1 className="spooky-title mb-1" style={{ fontSize: '3.5rem', color: '#DC143C', textShadow: '0 0 30px rgba(220,20,60,0.8)' }}>
+          <h1 className="spooky-title mb-1" style={{ fontSize: '2.3rem', color: '#DC143C', textShadow: '0 0 30px rgba(220,20,60,0.8)' }}>
             VOTE TO ELIMINATE
           </h1>
           <p className="text-gray-500 tracking-widest text-sm spooky-title">-- CHOOSE YOUR SUSPECT WISELY --</p>
@@ -67,11 +68,11 @@ export default function VotingPhase({ room, player, socket }: VotingPhaseProps) 
         <div className="flex justify-center mb-10">
           <div className={`px-8 py-4 rounded-xl border text-center transition-all duration-500 ${isUrgent ? 'animate-pulse' : ''}`} style={{ borderColor: isUrgent ? '#DC143C88' : '#3d002044', backgroundColor: isUrgent ? 'rgba(220,20,60,0.15)' : 'rgba(0,0,0,0.5)', boxShadow: isUrgent ? '0 0 30px rgba(220,20,60,0.3)' : 'none', minWidth: '200px' }}>
             <p className="spooky-title tracking-widest text-xs text-gray-600 mb-1">TIME TO VOTE</p>
-            <div className="text-5xl font-bold spooky-title" style={{ color: isUrgent ? '#DC143C' : '#aaa' }}>
+            <div className="text-4xl md:text-5xl font-bold spooky-title" style={{ color: isUrgent ? '#DC143C' : '#aaa' }}>
               {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}
             </div>
             <div className="mt-2 h-1 bg-gray-900 rounded-full overflow-hidden">
-              <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${(timeLeft / 60) * 100}%`, backgroundColor: isUrgent ? '#DC143C' : '#555' }} />
+              <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${(timeLeft / (room.phaseDurationSeconds || 60)) * 100}%`, backgroundColor: isUrgent ? '#DC143C' : '#555' }} />
             </div>
           </div>
         </div>
@@ -84,7 +85,7 @@ export default function VotingPhase({ room, player, socket }: VotingPhaseProps) 
                 key={target.id}
                 onClick={() => handleSelectTarget(target.id)}
                 disabled={hasVoted}
-                className="animate-slideUp p-5 rounded-xl border-2 transition-all duration-300 text-center disabled:cursor-not-allowed hover:scale-105"
+                className="animate-slideUp p-3 md:p-5 rounded-xl border-2 transition-all duration-300 text-center disabled:cursor-not-allowed hover:scale-105"
                 style={{
                   animationDelay: `${idx * 0.08}s`,
                   borderColor: isSelected ? '#DC143C' : '#2a0010',
@@ -93,7 +94,7 @@ export default function VotingPhase({ room, player, socket }: VotingPhaseProps) 
                   transform: isSelected ? 'scale(1.05)' : 'scale(1)',
                 }}
               >
-                <div className="text-3xl mb-2">{avatars[idx % avatars.length]}</div>
+                <div className="text-2xl md:text-3xl mb-2">{avatars[idx % avatars.length]}</div>
                 <div className="font-semibold text-white text-sm">{target.name}</div>
                 {target.role === 'Mayor' && <div className="text-yellow-400 text-xs mt-1 spooky-title">MAYOR: 2x VOTE</div>}
                 {isSelected && <div className="text-xs mt-2 spooky-title tracking-wider animate-fadeIn" style={{ color: '#DC143C' }}>SELECTED</div>}
@@ -108,7 +109,7 @@ export default function VotingPhase({ room, player, socket }: VotingPhaseProps) 
               <button
                 onClick={handleVote}
                 disabled={!selectedTarget}
-                className="px-12 py-4 rounded-xl font-bold text-xl spooky-title tracking-wider transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed hover:scale-105"
+                className="px-8 md:px-12 py-3 md:py-4 rounded-xl font-bold text-base md:text-xl spooky-title tracking-wider transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed hover:scale-105"
                 style={selectedTarget ? {
                   backgroundColor: '#8B0000',
                   border: '2px solid #DC143C',
@@ -142,6 +143,9 @@ export default function VotingPhase({ room, player, socket }: VotingPhaseProps) 
           )}
         </div>
 
+        <div className="mt-8 max-w-md mx-auto">
+          <RoleSummary room={room} />
+        </div>
       </div>
     </div>
   )

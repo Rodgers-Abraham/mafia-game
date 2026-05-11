@@ -1,6 +1,7 @@
 import { Room } from '@/types/game'
 import { useEffect, useState } from 'react'
 import { playSound, stopAllSounds } from '@/utils/sound'
+import RoleSummary from '@/components/RoleSummary'
 import React from 'react'
 
 interface ResultsPhaseProps {
@@ -92,6 +93,9 @@ export default function ResultsPhase({ room }: ResultsPhaseProps) {
           <div className="w-2 h-2 bg-red-900 rounded-full animate-pulse" />
           <p className="text-gray-600 spooky-title tracking-widest text-sm">NIGHT FALLS IN {countdown}s...</p>
           <div className="w-2 h-2 bg-red-900 rounded-full animate-pulse" style={{ animationDelay: '0.5s' }} />
+        </div>
+        <div className="mt-6">
+          <RoleSummary room={room} />
         </div>
 
       </div>
